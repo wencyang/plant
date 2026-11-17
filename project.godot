@@ -6,9 +6,10 @@ config/name="The Quiet Conservatory"
 config/icon="res://icon.svg"
 run/main_scene="res://scenes/garden.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
-config/description="An alien botanical breeding garden. Grow a lineage. Let it take root."
+config/description="A pixel botanical adventure. Explore four biomes, collect wild plants, and grow a lineage."
 
 [display]
+window/dpi/allow_hidpi=true
 window/size/viewport_width=1440
 window/size/viewport_height=1000
 window/size/window_width_override=1440
@@ -22,6 +23,7 @@ window/stretch/aspect="expand"
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/default_filters/use_nearest_mipmap_filter=false
+textures/canvas_textures/default_texture_filter=0
 environment/defaults/default_clear_color=Color(0.027, 0.059, 0.055, 1)
 
 [input]

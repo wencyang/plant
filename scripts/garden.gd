@@ -56,8 +56,8 @@ var save_timer: float = 0
 var combat_ui_timer: float = 0
 var toast_time: float = 0
 var ui_margin: MarginContainer
-var serif: SystemFont
-var sans: SystemFont
+var serif: Font
+var sans: Font
 var small_layout: bool = false
 var effects: Control
 var fx: Array = []
@@ -75,13 +75,20 @@ var root_column: VBoxContainer
 var brand_label: Label
 var collection_box: VBoxContainer
 var tray_hint: Label
+var explore_button: Button
+var wilderness: Control
+var exploring: bool = false
+var wild_encounter_open: bool = false
 
 func _ready() -> void:
-	serif = SystemFont.new()
-	serif.font_names = PackedStringArray(["Georgia", "Times New Roman", "serif"])
-	sans = SystemFont.new()
-	sans.font_names = PackedStringArray(["Helvetica Neue", "Arial", "DejaVu Sans"])
-	sans.font_weight = 400
+	var title_font := SystemFont.new()
+	title_font.font_names = PackedStringArray(["Menlo","DejaVu Sans Mono","monospace"])
+	serif = title_font
+	var body_font := SystemFont.new()
+	body_font.font_names = PackedStringArray(["Helvetica Neue","Arial","DejaVu Sans"])
+	body_font.font_weight = 400
+	sans = body_font
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_build_theme()
 	if not state.load_game(): state.new_game()
 	state.tick_growth()
@@ -125,8 +132,12 @@ func _style(bg: Color, border: Color = Color("344d3c"), radius: int = 5, horizon
 	var s := StyleBoxFlat.new()
 	s.bg_color = bg
 	s.border_color = border
-	s.set_border_width_all(1)
-	s.set_corner_radius_all(radius)
+	s.set_border_width_all(2)
+	s.set_corner_radius_all(0)
+	s.border_color = border
+	s.shadow_color = Color(0.015,0.035,0.025,0.5)
+	s.shadow_size = 2
+	s.shadow_offset = Vector2(2,2)
 	s.content_margin_left = horizontal
 	s.content_margin_right = horizontal
 	s.content_margin_top = vertical
@@ -195,9 +206,9 @@ func _build_ui() -> void:
 	titles.add_theme_constant_override("separation", 3)
 	title_row.add_child(titles)
 	titles.add_child(_label("FIELD STATION  /  001     ·     DUSK BIOME", 10, Color("8b9f87")))
-	heading = _label("The quiet conservatory", 36, INK, true)
+	heading = _label("Quiet Conservatory", 36, INK, true)
 	titles.add_child(heading)
-	helper_label = _label("Strange things take root here. Grow something worth keeping.", 13, MUTED)
+	helper_label = _label("Your garden is home. A whole wild world is growing beyond it.", 13, MUTED)
 	titles.add_child(helper_label)
 	_spacer(title_row)
 	var score_box := VBoxContainer.new()
@@ -316,10 +327,12 @@ func _build_ui() -> void:
 	footer_row.add_child(_button("Seed bank", _open_seeds, Vector2(120, 48)))
 	footer_row.add_child(_button("Codex", _open_codex, Vector2(100, 48)))
 	_spacer(footer_row)
-	footer_row.add_child(_button("Field guide", _open_guide, Vector2(100, 48)))
+	explore_button = _button("Explore wilds →", _open_wilderness, Vector2(175,48))
+	explore_button.add_theme_color_override("font_color",AMBER)
+	footer_row.add_child(explore_button)
 	primary_button = _button("Let the gardens meet   →", _prepare_battle, Vector2(265, 48))
-	primary_button.add_theme_stylebox_override("normal", _style(Color("a9b68a"), Color("d0d5a9"), 5, 24, 14))
-	primary_button.add_theme_stylebox_override("hover", _style(Color("c3ca9d"), Color("dfe2bb"), 5, 24, 14))
+	primary_button.add_theme_stylebox_override("normal", _style(Color("a9b68a"), Color("d0d5a9"), 0, 14, 14))
+	primary_button.add_theme_stylebox_override("hover", _style(Color("c3ca9d"), Color("dfe2bb"), 0, 14, 14))
 	primary_button.add_theme_color_override("font_color", Color("182c22"))
 	primary_button.add_theme_color_override("font_hover_color", Color("14281c"))
 	footer_row.add_child(primary_button)
@@ -335,7 +348,7 @@ func _build_ui() -> void:
 func _responsive() -> void:
 	small_layout = size.x < 900
 	sidebar.visible = not small_layout
-	heading.add_theme_font_size_override("font_size", 25 if small_layout else 36)
+	heading.add_theme_font_size_override("font_size", 24 if small_layout else 34)
 	root_column.add_theme_constant_override("separation", 6 if small_layout else 10)
 	display_grid.custom_minimum_size.y = 72 if small_layout else 108
 	display_heading.visible = sim == null
@@ -353,7 +366,7 @@ func _responsive() -> void:
 	for edge in ["top", "bottom"]: ui_margin.add_theme_constant_override("margin_" + edge, 14 if small_layout else 22)
 	resources_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL if small_layout else Control.SIZE_SHRINK_END
 	resources_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if small_layout else HORIZONTAL_ALIGNMENT_RIGHT
-	resources_label.add_theme_font_size_override("font_size", 10 if small_layout else 14)
+	resources_label.add_theme_font_size_override("font_size", 11 if small_layout else 14)
 	timer_label.add_theme_font_size_override("font_size", 20 if small_layout else 25)
 	resources_label.text = ("LIGHT %d · SEEDS %d · AGENTS %d · GRAFTS %d" if small_layout else "Gathered light  %d    /    Seeds  %d    /    Agents  %d    /    Graft  %d") % [state.resources.sunlight, state.seed_bank.size(), state.resources.agents, state.resources.grafts]
 	for c in display_grid.get_children(): c.custom_minimum_size = Vector2(0, 72 if small_layout else 108)
@@ -364,8 +377,13 @@ func _responsive() -> void:
 		if b is Button:
 			b.custom_minimum_size.x = 0 if small_layout else (265 if b == primary_button else 100)
 			b.add_theme_font_size_override("font_size", 11 if small_layout else 14)
-	footer_row.get_child(4).visible = not small_layout
-	primary_button.text = "Battle →" if small_layout else "Let the gardens meet   →"
+	footer_row.add_theme_constant_override("separation",6 if small_layout else 12)
+	footer_row.get_child(0).text = "Lab" if small_layout else "Laboratory"
+	footer_row.get_child(1).text = "Seeds" if small_layout else "Seed bank"
+	explore_button.text = "Explore" if small_layout else "Explore wilds →"
+	explore_button.visible = true
+	explore_button.disabled = sim != null
+	primary_button.text = "Battle" if small_layout else "Let the gardens meet   →"
 	if sim != null: primary_button.text = "In bloom" if small_layout else "Gardens in bloom"
 	if is_instance_valid(modal): _position_modal()
 	toast_panel.position = Vector2(maxf(12, (size.x - 390) / 2), size.y - 145)
@@ -455,7 +473,7 @@ func _refresh_side() -> void:
 		side_content.add_child(_button("Return to garden notes", func(): selected_id = ""; moving = false; _refresh_side()))
 	else:
 		side_content.add_child(_label("A STUDY IN COEXISTENCE", 10, MUTED))
-		side_content.add_child(_label("Beauty has\nits own ecology.", 29, INK, true))
+		side_content.add_child(_label("Beauty has\nits own ecology.", 25, INK, true))
 		side_content.add_child(_wrap("Different forms. Shared pigments. An improbable family, slowly finding its balance.", 14))
 		_line(side_content)
 		var s: Dictionary = state.display_score()
@@ -470,6 +488,7 @@ func _refresh_side() -> void:
 		side_content.add_child(_wrap("Next observation: %d beauty" % state.next_display_threshold() if state.next_display_threshold() > 0 else "Every display milestone recorded.",11,AMBER))
 		side_content.add_child(_button("Gather display rewards", _claim_display))
 		side_content.add_child(_button("Collect daily growth", _collect_daily))
+		side_content.add_child(_button("Field guide",_open_guide))
 		side_content.add_child(_wrap("FIELD NOTE  /  01\nSelect a specimen, then touch an empty soil cell. Or drag it directly into the bed.", 12))
 
 func _meter(value: float, color: Color) -> ProgressBar:
@@ -581,7 +600,7 @@ func _open_modal(title: String, kind: String = "") -> void:
 func _position_modal() -> void:
 	if not is_instance_valid(modal): return
 	var panel: Control = modal.get_node("Panel")
-	var width: float = minf(820, size.x - 28)
+	var width: float = minf(860 if modal_kind == "wild_encounter" else 820, size.x - 28)
 	var height: float = minf(820, size.y - 50)
 	if modal_kind == "specimen": height = 280
 	panel.position = Vector2((size.x-width)*0.5, (size.y-height)*0.5)
@@ -623,6 +642,8 @@ func _open_detail(id: String) -> void:
 	bio.add_child(_wrap("%s\n%s%s" % [p.species,p.type," × " + str(p.secondary_type) if p.get("secondary_type", "") != "" else ""], 17, INK))
 	bio.add_child(_wrap(" / ".join(p.get("skills",[])), 13, Color("b5caa3")))
 	bio.add_child(_wrap("Mature specimen" if p.get("mature",true) else "Unfurling · mature in a few moments", 12))
+	if p.get("origin",{}).get("kind","") == "wild":
+		bio.add_child(_wrap("Wild-collected in %s\nField patch %s" % [p.origin.get("biome","the wilds"),p.origin.get("site","unknown")],12,AMBER))
 	if state.plants.has(id):
 		var rename := LineEdit.new()
 		rename.text = p.name
@@ -690,6 +711,7 @@ func _append_descendants(id: String, depth: int) -> void:
 	if depth == 0 and not found: modal_content.add_child(_label("A lineage waiting to unfold.", 12, MUTED))
 
 func _breed_from(id: String) -> void:
+	if exploring: _return_from_wilderness()
 	if sim != null:
 		_toast("Let the gardens settle before breeding.")
 		return
@@ -1101,7 +1123,7 @@ func _start_battle() -> void:
 func _build_battle_notes() -> void:
 	side_content.add_child(_label("ROOTS IN CONVERSATION",10,AMBER))
 	side_content.add_child(_label("A patient
-contest.",32,INK,true))
+contest.",28,INK,true))
 	side_content.add_child(_wrap("The soil remembers your arrangement. Close roots reach first; related organisms lend each other strength.",14))
 	_line(side_content)
 	battle_health_label = _wrap("",13,INK)
@@ -1207,6 +1229,10 @@ func _finish_battle() -> void:
 	modal_content.add_child(_button("Breed the next generation",func(): _open_lab()))
 
 func _process(delta: float) -> void:
+	if exploring and wild_encounter_open and not is_instance_valid(modal):
+		state.leave_wild_encounter()
+		wild_encounter_open = false
+		if is_instance_valid(wilderness): wilderness.encounter_closed(); wilderness.refresh()
 	if is_instance_valid(modal): _position_modal()
 	if toast_time > 0:
 		toast_time -= delta
@@ -1236,3 +1262,170 @@ func _process(delta: float) -> void:
 			combat_ui_timer = 0
 			_update_combat_ui()
 		if sim.finished: _finish_battle()
+
+# Field expeditions stay in the same persistent game: collected genes enter the
+# garden archive immediately, and returning home never regenerates the beds.
+func _open_wilderness() -> void:
+	if sim != null:
+		_toast("Wait for the gardens to settle before heading outside.")
+		return
+	_close_modal()
+	state.begin_expedition()
+	exploring = true
+	ui_margin.visible = false
+	if is_instance_valid(effects): effects.visible = false
+	if not is_instance_valid(wilderness):
+		wilderness = load("res://scripts/wilderness.gd").new()
+		wilderness.state = state
+		wilderness.returned_home.connect(_return_from_wilderness)
+		wilderness.encounter_requested.connect(_begin_wild_encounter)
+		wilderness.supplies_requested.connect(_open_field_supplies)
+		add_child(wilderness)
+		wilderness.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	wilderness.visible = true
+	wilderness.process_mode = Node.PROCESS_MODE_INHERIT
+	wilderness.refresh()
+	wilderness.move_to_front()
+	if not state.expedition.active_encounter.is_empty():
+		wild_encounter_open = true
+		_show_wild_encounter("You return to the same wild organism. Its rhythm is familiar.")
+
+func _return_from_wilderness() -> void:
+	_close_modal()
+	state.leave_wild_encounter()
+	wild_encounter_open = false
+	exploring = false
+	if is_instance_valid(wilderness):
+		wilderness.encounter_closed()
+		wilderness.visible = false
+		wilderness.process_mode = Node.PROCESS_MODE_DISABLED
+	ui_margin.visible = true
+	if is_instance_valid(effects): effects.visible = true
+	last_log = "Back home. %d wild specimens found their way into your living collection." % int(state.expedition.get("captures",0))
+	state.save_game()
+	_refresh()
+	explore_button.grab_focus()
+
+func _begin_wild_encounter(biome: String, site_id: String) -> void:
+	var result: Dictionary = state.wild_encounter(biome,site_id)
+	if not result.get("ok",false):
+		_toast(str(result.get("message","This patch is resting.")))
+		wilderness.encounter_closed()
+		return
+	wild_encounter_open = true
+	_show_wild_encounter(str(result.message))
+
+func _show_wild_encounter(message: String = "") -> void:
+	if is_instance_valid(wilderness): wilderness.waiting = true
+	var encounter: Dictionary = state.expedition.get("active_encounter",{})
+	if encounter.is_empty(): return
+	var p: Dictionary = encounter.plant
+	_open_modal("A wild %s!" % str(p.species),"wild_encounter")
+	modal_content.add_child(_wrap("%s / WILD ENCOUNTER" % str(encounter.biome).to_upper(),11,AMBER))
+	var stage: BoxContainer = VBoxContainer.new() if small_layout else HBoxContainer.new()
+	modal_content.add_child(stage)
+	var habitat := PanelContainer.new()
+	habitat.add_theme_stylebox_override("panel",_style(Color("1b372e"),Color("6b8964"),0,12,12))
+	habitat.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stage.add_child(habitat)
+	var art := Portrait.new()
+	art.plant = p
+	art.custom_minimum_size = Vector2(160,190 if small_layout else 255)
+	habitat.add_child(art)
+	var bio := VBoxContainer.new()
+	bio.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stage.add_child(bio)
+	bio.add_child(_wrap(str(p.name),23,INK))
+	bio.add_child(_wrap("%s · %s · G%d" % [p.type,p.rarity,p.generation],13,AMBER))
+	bio.add_child(_wrap("%s pattern · %s tissue\nVitality %d · Growth %d\n%s" % [_gene(p,"pattern"),_gene(p,"texture"),p.stats.vitality,p.stats.growth," / ".join(p.skills)],13))
+	if not message.is_empty(): bio.add_child(_wrap(message,13,Color("bdcf9b")))
+	modal_content.add_child(_wrap("Study the plant before taking a cutting. A successful collection brings this exact genome home, ready to breed and battle.",13))
+	modal_content.add_child(_wrap("COLLECT  %d%%    /    VINE LURE  %d%%\nA failed cutting uses its kit. After failure there is a 25%% chance the plant withdraws until the next field day." % [roundi(state.capture_odds()*100),roundi(state.capture_odds("entangle")*100)],12,AMBER))
+	var footer := VBoxContainer.new()
+	footer.add_theme_constant_override("separation",8)
+	modal.get_node("Panel").get_child(0).add_child(footer)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation",6)
+	footer.add_child(actions)
+	var observe := _button("Studied" if encounter.observed else "Study · free",func(): _wild_action("observe"))
+	observe.disabled = bool(encounter.observed)
+	observe.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	actions.add_child(observe)
+	var collect := _button("Collect · %d%%" % roundi(state.capture_odds()*100),func(): _wild_action("gather"))
+	collect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	collect.disabled = state.field_kits <= 0
+	actions.add_child(collect)
+	var support := _button("Vine lure · %d%%" % roundi(state.capture_odds("entangle")*100),func(): _wild_action("entangle"))
+	support.disabled = not bool(state.field_status().can_entangle) or state.field_kits <= 0 or int(state.resources.sunlight) < 5
+	footer.add_child(support)
+	footer.add_child(_wrap("%d FIELD KITS / Collect uses 1 kit. Vine lure uses 1 kit + 5 light and needs a mature Vine." % state.field_kits,10,MUTED))
+	var extras := HBoxContainer.new()
+	footer.add_child(extras)
+	extras.add_child(_button("Supplies",_open_field_supplies))
+	extras.add_child(_button("Leave it growing",_leave_wild))
+
+func _wild_action(method: String) -> void:
+	var result: Dictionary = state.resolve_wild_capture(method)
+	if not result.get("ok",false):
+		_toast(str(result.get("message","The collection could not be completed.")))
+		return
+	if result.get("caught",false):
+		_show_wild_capture(result.plant,str(result.message))
+	elif result.get("fled",false):
+		_close_modal()
+		wild_encounter_open = false
+		wilderness.encounter_closed()
+		wilderness.refresh()
+		_toast(str(result.message))
+	else:
+		_show_wild_encounter(str(result.message))
+	wilderness.refresh()
+
+func _show_wild_capture(p: Dictionary, message: String) -> void:
+	selected_id = str(p.id)
+	_open_modal("A new companion takes root","wild_capture")
+	modal_content.add_child(_wrap("COLLECTED / %s / %s" % [str(p.species).to_upper(),str(p.rarity).to_upper()],12,AMBER))
+	var art := Portrait.new()
+	art.plant = p
+	art.reveal = 0
+	art.custom_minimum_size = Vector2(200,230)
+	modal_content.add_child(art)
+	var reveal_tween := art.create_tween()
+	reveal_tween.tween_property(art,"reveal",1.0,0.65)
+	modal_content.add_child(_wrap(str(p.name),26,INK))
+	modal_content.add_child(_wrap(message,14,Color("c4d5a3")))
+	modal_content.add_child(_wrap("%s · %s pattern\nFound in %s. This exact plant is now in your specimen tray and codex. Its wild traits can pass to a new generation." % [p.type,_gene(p,"pattern"),p.origin.biome],13))
+	var footer := VBoxContainer.new()
+	modal.get_node("Panel").get_child(0).add_child(footer)
+	footer.add_child(_button("Keep exploring →",_continue_exploring,Vector2(0,46)))
+	footer.add_child(_button("Return to garden",_return_from_wilderness))
+	footer.add_child(_button("Read its genome",func(): _open_detail(str(p.id))))
+	wilderness.refresh()
+
+func _continue_exploring() -> void:
+	state.leave_wild_encounter()
+	_close_modal()
+	wild_encounter_open = false
+	wilderness.encounter_closed()
+	wilderness.refresh()
+
+func _leave_wild() -> void:
+	state.leave_wild_encounter()
+	_continue_exploring()
+
+func _open_field_supplies() -> void:
+	if is_instance_valid(wilderness): wilderness.waiting = true
+	wild_encounter_open = true
+	_open_modal("The field satchel","wild_supplies")
+	var status: Dictionary = state.field_status()
+	modal_content.add_child(_label("%d / FIELD KITS" % state.field_kits,30,AMBER,true))
+	modal_content.add_child(_wrap("Field kits hold a safe cutting from a wild plant. Study is free. Each collection attempt uses one kit, including failed attempts.",14))
+	modal_content.add_child(_wrap("Wild specimens collected: %d\nTiles walked: %d\nHabitats visited: %s" % [status.captures,status.steps,", ".join(status.discovered_biomes)],13))
+	modal_content.add_child(_button("Pack 5 kits · 20 light",func():
+		var result: Dictionary = state.restock_field_kits()
+		_toast(str(result.message))
+		if is_instance_valid(wilderness): wilderness.refresh()
+		_open_field_supplies()))
+	modal_content.add_child(_wrap("18 patches grow across four habitats. Collected and withdrawn patches regrow each field day. Your map position and field notes save automatically.",13))
+	if not state.expedition.active_encounter.is_empty(): modal_content.add_child(_button("Back to the wild plant",func(): _show_wild_encounter()))
+	modal_content.add_child(_button("Back to the trail",_continue_exploring))

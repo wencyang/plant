@@ -26,7 +26,7 @@ func _ready() -> void:
 	title_label = Label.new()
 	title_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_label.add_theme_font_size_override("font_size", 12 if zone != "tray" else 14)
+	title_label.add_theme_font_size_override("font_size", 13 if zone != "tray" else 14)
 	title_label.add_theme_color_override("font_color", Color("d4dac6"))
 	title_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	add_child(title_label)
@@ -34,7 +34,7 @@ func _ready() -> void:
 	meta_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	meta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	meta_label.clip_text = true
-	meta_label.add_theme_font_size_override("font_size", 10)
+	meta_label.add_theme_font_size_override("font_size", 11)
 	meta_label.add_theme_color_override("font_color", Color("84998c"))
 	add_child(meta_label)
 	mouse_entered.connect(func(): hovered = true; queue_redraw())
@@ -117,77 +117,55 @@ func _draw() -> void:
 		draw_rect(rect.grow(-3), Color("9aaf94"), false, 1)
 
 func _draw_living_soil() -> void:
-	# A moist, irregular planting hollow, drawn beneath the actual roots. Its
-	# contour and strata remain quiet enough to read a plant's tissue markings.
+	# A stepped peat hollow: coherent clusters instead of antialiased contours.
 	var footer: float = 26.0 if zone == "display" else 31.0
-	var base_y: float = (size.y - footer - 3.0) * 0.88 + 3.0
-	var center := Vector2(size.x * 0.5, base_y)
-	var width: float = minf(size.x * 0.37, 105.0)
-	var depth: float = minf(size.y * 0.135, 17.0)
-	var phase: float = float(index) * 1.79 + (1.5 if zone == "display" else 0.0)
-	for layer in range(3):
-		var points := PackedVector2Array()
-		var scale_factor: float = 1.1 - float(layer) * 0.18
-		for j in range(49):
-			var a: float = float(j) / 48.0 * TAU
-			var edge: float = 1.0 + sin(a * 5 + phase) * 0.07 + sin(a * 11 + phase) * 0.035
-			points.append(center + Vector2(cos(a) * width, sin(a) * depth) * scale_factor * edge)
-		draw_colored_polygon(points, Color(0.09 - float(layer) * 0.008, 0.125 - float(layer) * 0.009, 0.096 - float(layer) * 0.009, 0.50))
-		if layer != 1:
-			draw_polyline(points, Color(0.29, 0.34, 0.23, 0.14 if layer == 0 else 0.09), 0.7, true)
-	# Sediment and pale mineral flecks settle in the lower layers.
-	for i in range(46):
-		var x: float = fposmod(float(i * 43 + index * 19), maxf(1, size.x - 18)) + 9
-		var y: float = base_y - depth * 0.55 + fposmod(float(i * 17 + index * 7), maxf(1, depth * 1.8))
-		var tint := Color(0.51, 0.49, 0.33, 0.11) if i % 3 == 0 else Color(0.31, 0.39, 0.28, 0.12)
-		draw_line(Vector2(x, y), Vector2(x + (1.7 if i % 4 else 3.3), y + 0.5), tint, 0.65)
-	# Roots wind through the hollow, never as a rectangular grid or a selection glow.
-	for i in range(5):
-		var side: float = -1.0 if i % 2 == 0 else 1.0
-		var start: Vector2 = center + Vector2(side * (4.0 + float(i) * 2), -0.5)
-		var root_path := PackedVector2Array()
-		for j in range(20):
-			var t: float = float(j) / 19.0
-			var reach: float = width * (0.45 + float(i % 3) * 0.16)
-			root_path.append(start + Vector2(side * reach * t, sin(t * 5 + phase + float(i)) * depth * 0.20 + t * 3))
-		draw_polyline(root_path, Color(0.34, 0.39, 0.27, 0.19 if not plant.is_empty() else 0.10), 0.75, true)
-		for j in [7, 12, 16]:
-			var point: Vector2 = root_path[j]
-			draw_polyline(PackedVector2Array([point, point + Vector2(side * 2, 2), point + Vector2(side * 6, 3)]), Color(0.41, 0.43, 0.30, 0.13), 0.55, true)
-	# A little decaying tissue at a bed's edge places it inside a growing world.
-	for i in range(3):
-		var side: float = -1.0 if i % 2 == 0 else 1.0
-		var p: Vector2 = center + Vector2(side * width * (0.73 + float(i) * 0.08), depth * 0.55)
-		var leaf := PackedVector2Array([p, p + Vector2(side * 8, -2), p + Vector2(side * 6, 3), p + Vector2(side * 2, 3)])
-		draw_colored_polygon(leaf, Color(0.31, 0.33, 0.22, 0.14))
+	var base_y: int = roundi((size.y-footer-3)*0.88+3)
+	var center_x: int = roundi(size.x*0.5)
+	var half: int = mini(roundi(size.x*0.35),94)
+	for layer in range(4):
+		var span: int = half-4*layer
+		var y: int = base_y-4+layer*4
+		var earth: Color = Color("1a302b") if layer%2==0 else Color("20372c")
+		draw_rect(Rect2(center_x-span,y,maxi(4,span*2),4),earth)
+		if layer in [0,3]: draw_rect(Rect2(center_x-span+4,y,maxi(4,span*2-8),1),Color("3b4e34"))
+	for i in range(30):
+		var x: int = center_x-half+posmod(i*23+index*7,maxi(1,half*2))
+		var y: int = base_y-2+posmod(i*7+index*3,13)
+		var tint := Color("40533a") if i%5==0 else Color("2d4332")
+		draw_rect(Rect2(x,y,2 if i%3 else 4,1),tint)
+	# Short square turns are thin root hairs, not straight projectile-like lines.
+	if not plant.is_empty():
+		for i in range(4):
+			var side: int = -1 if i%2==0 else 1
+			var length: int = mini(half-4,12+i*7)
+			var x: int = center_x+side*4
+			var y: int = base_y+3+int(i/2)*3
+			var root_color := Color("4b6243")
+			draw_rect(Rect2(mini(x,x+side*length),y,length,1),root_color)
+			draw_rect(Rect2(x+side*length,y,1,3),root_color)
+			draw_rect(Rect2(mini(x+side*length,x+side*(length+4)),y+3,4,1),Color("354b34"))
 
 func _draw_grown_frame(rect: Rect2) -> void:
-	if zone == "tray":
-		return
-	# Thin, fibrous chitin binds the soil dividers, with little seams at joins.
-	for side in [0, 1]:
-		var points := PackedVector2Array()
-		for i in range(31):
-			var t: float = float(i) / 30.0
-			var x: float = rect.position.x + t * rect.size.x
-			var y: float = rect.position.y + (2 if side == 0 else rect.size.y - 3)
-			y += sin(t * 11 + float(index) * 2 + float(side)) * 0.75
-			points.append(Vector2(x, y))
-		draw_polyline(points, Color(0.28, 0.35, 0.25, 0.18), 0.65, true)
+	# Stepped, square joins give every packet and soil tile the same sprite scale.
+	var frame_color := Color("48634a")
+	var shade_color := Color("142d2a")
 	for corner in range(4):
-		var right: bool = corner % 2 == 1
-		var lower: bool = corner >= 2
-		var p := Vector2(size.x - 4 if right else 4, size.y - 4 if lower else 4)
-		var side: float = -1.0 if right else 1.0
-		var down: float = -1.0 if lower else 1.0
-		draw_polyline(PackedVector2Array([p + Vector2(0, down * 11), p + Vector2(side * 1, down * 4), p + Vector2(side * 5, down), p + Vector2(side * 15, down * 2)]), Color(0.36, 0.42, 0.30, 0.22), 0.8, true)
+		var right: bool = corner%2==1
+		var lower: bool = corner>=2
+		var x: int = roundi(rect.end.x-4 if right else rect.position.x+3)
+		var y: int = roundi(rect.end.y-4 if lower else rect.position.y+3)
+		var horizontal: int = -1 if right else 1
+		var vertical: int = -1 if lower else 1
+		draw_rect(Rect2(mini(x,x+horizontal*9),y,10,1),frame_color)
+		draw_rect(Rect2(x,mini(y,y+vertical*5),1,6),frame_color)
+		draw_rect(Rect2(x+horizontal,y+vertical,2,2),shade_color)
 
 func _style(bg: Color, border: Color) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color = bg
 	s.border_color = border
-	s.set_border_width_all(1)
-	s.set_corner_radius_all(6 if zone == "tray" else 3)
+	s.set_border_width_all(2)
+	s.set_corner_radius_all(0)
 	return s
 
 func _gui_input(event: InputEvent) -> void:

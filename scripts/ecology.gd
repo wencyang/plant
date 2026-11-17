@@ -1,96 +1,80 @@
 extends Control
-## Atmospheric habitat. All contours and spores are reproducible, original drawings.
+## Quiet pixel habitat behind the tended garden. Everything snaps to a four-pixel
+## environmental grid, with square drifting pollen and stepped fern silhouettes.
 var time: float = 0.0
 var motes: Array = []
 var stalks: Array = []
+var _last_tick: int = -1
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 8149
-	for i in range(65):
-		motes.append(Vector3(rng.randf(), rng.randf(), rng.randf_range(0.3, 1.0)))
-	for i in range(40):
-		stalks.append(Vector4(rng.randf(), rng.randf_range(0.1, 0.5), rng.randf_range(0.01, 0.04), rng.randf()))
+	for i in range(40): motes.append(Vector3(rng.randf(),rng.randf(),rng.randf_range(0.3,1.0)))
+	for i in range(32): stalks.append(Vector4(rng.randf(),rng.randf_range(0.08,0.35),rng.randf_range(0.6,1.2),rng.randf()))
 
 func _process(delta: float) -> void:
 	time += delta
-	queue_redraw()
+	var tick: int = int(time*3.0)
+	if tick != _last_tick:
+		_last_tick = tick
+		queue_redraw()
+
+func _pixel_rect(x: float,y: float,w: float,h: float,c: Color) -> void:
+	draw_rect(Rect2(Vector2(floorf(x/4)*4,floorf(y/4)*4),Vector2(maxf(4,floorf(w/4)*4),maxf(4,floorf(h/4)*4))),c)
 
 func _draw() -> void:
 	if size.x < 1 or size.y < 1: return
-	draw_rect(Rect2(Vector2.ZERO, size), Color("0b1717"))
-	# The far ecology stays barely visible behind the tended bed.
-	for i in range(12):
-		var center := Vector2(size.x * (0.1 + float(i % 4) * 0.3), size.y * float(i) / 12.0)
-		draw_circle(center, size.x * 0.25, Color(0.08, 0.16, 0.14, 0.055))
-	# Thin hanging collectors drink the mist above the tended beds. The light is
-	# tissue pigment, muted enough to stay behind the resource bar and typography.
-	for i in range(5):
-		var x: float = size.x * (0.56 + float(i) * 0.076)
-		var height: float = 40 + fposmod(float(i) * 47.3, 98.0)
-		var points := PackedVector2Array()
-		for j in range(23):
-			var t: float = float(j) / 22.0
-			points.append(Vector2(x + sin(t * 4 + float(i) + time * 0.09) * 15 * t, t * height))
-		draw_polyline(points, Color(0.22, 0.33, 0.27, 0.15), 0.9, true)
-		var tip: Vector2 = points[-1]
-		_habitat_leaf(tip - Vector2(0, 11), tip + Vector2(3, 16), 5.5, Color(0.38, 0.46, 0.34, 0.11), float(i))
-	for s: Vector4 in stalks:
-		var x: float = s.x * size.x
-		var base := Vector2(x, size.y)
-		var top := Vector2(x + sin(time * 0.12 + s.w * 6.0) * 10.0, size.y * (1.0 - s.y))
-		var points := PackedVector2Array()
-		for j in range(15):
-			var f := float(j) / 14.0
-			points.append(base.lerp(top, f) + Vector2(sin(f * 3.0 + s.w * 6.0) * 25.0 * f, 0))
-		draw_polyline(points, Color(0.15, 0.24, 0.20, 0.24), 1.5, true)
-		for j in range(3):
-			var f: float = 0.25 + j * 0.2
-			var p: Vector2 = base.lerp(top, f)
-			var side: float = -1.0 if j % 2 == 0 else 1.0
-			var tip: Vector2 = p + Vector2(side * size.x * s.z, -40 - s.w * 22)
-			_habitat_leaf(p, tip, 8 + s.w * 7, Color(0.12, 0.22, 0.19, 0.23), s.w * 8)
-		# A narrow membrane stores the rainwater at the end of a few mature stalks.
-		if s.w > 0.72:
-			var top_point: Vector2 = points[-1]
-			_habitat_leaf(top_point - Vector2(0, 7), top_point + Vector2(8, 23), 7, Color(0.26, 0.36, 0.29, 0.14), s.w * 12)
-	# The outer root mat has no regular grid: fibers cross, split and disappear.
+	draw_rect(Rect2(Vector2.ZERO,size),Color("10252b"))
+	# Very broad shadow bands, without blurred circles or vector gradients.
+	_pixel_rect(0,size.y*0.64,size.x,size.y*0.36,Color("122b2b"))
+	_pixel_rect(0,size.y*0.84,size.x,size.y*0.16,Color("17332e"))
+	for i in range(90):
+		var x: float = fposmod(float(i)*137.0+17,size.x)
+		var y: float = fposmod(float(i)*83.0+41,size.y)
+		if i%3 == 0: _pixel_rect(x,y,4,4,Color("193332"))
+		else: _pixel_rect(x,y,8,4,Color("142c2e"))
+	# Hanging searching filaments frame the top rather than competing with text.
 	for i in range(7):
-		var points := PackedVector2Array()
-		var base_y: float = size.y * (0.75 + float(i) * 0.035)
-		for j in range(45):
-			var t: float = float(j) / 44.0
-			points.append(Vector2(t * size.x, base_y + sin(t * 7 + float(i) * 2.3) * 22 + sin(t * 21 + float(i)) * 4))
-		draw_polyline(points, Color(0.20, 0.29, 0.21, 0.10), 0.8, true)
+		var x: float = size.x*(0.48+float(i)*0.073)
+		var height: float = 28+float((i*37)%90)
+		for j in range(int(height/8.0)):
+			var step_x: float = x+floorf(sin(float(j)*0.5+float(i))*2.0)*4
+			_pixel_rect(step_x,j*8,4,8,Color("1b3834"))
+			if j%3==1: _pixel_rect(step_x-4,j*8,4,4,Color("274638"))
+		_cluster(Vector2(x,height),12,20,Color("24453a"),i)
+	# Ferns and water-storing leaf fans grow around the lower screen edges.
+	for s: Vector4 in stalks:
+		var base := Vector2(floorf(s.x*size.x/4)*4,size.y)
+		var height: float = floorf(size.y*s.y/4)*4
+		var sway: float = 4.0 if sin(time*0.15+s.w*8)>0.8 else 0.0
+		for j in range(int(height/8.0)):
+			var y: float = base.y-float(j)*8
+			var x: float = base.x+floorf(sin(float(j)*0.15+s.w*5)*3)*4+sway
+			_pixel_rect(x,y,4,8,Color("234539"))
+			if j%4==0 and j>0:
+				var side: int = -1 if j%8==0 else 1
+				var leaf_origin := Vector2(x+side*12,y-8)
+				_cluster(leaf_origin,16+floorf(s.z*8),28+floorf(s.z*12),Color("204137"),j)
+				_pixel_rect(x+side*4,y,12,4,Color("2c4e3d"))
+	# Segmented roots disappear beneath one another, like a low-resolution map.
+	for i in range(8):
+		var start_y: float = size.y*(0.82+float(i)*0.024)
+		for j in range(int(size.x/20.0)+1):
+			var x: float = j*20
+			var y: float = start_y+floorf(sin(j*0.55+i*1.8)*2)*4
+			_pixel_rect(x,y,20,4,Color("254332") if i%2==0 else Color("1c3a30"))
+			if j%5==0: _pixel_rect(x+4,y+4,4,8,Color("31513a"))
 	for m: Vector3 in motes:
-		var p := Vector2(fposmod(m.x * size.x + sin(time * 0.08 + m.y * 7.0) * 22.0, size.x), fposmod(m.y * size.y - time * m.z * 2.0, size.y))
-		draw_circle(p, m.z * 1.5, Color(0.65, 0.74, 0.57, 0.15 * m.z))
-	# Rain-hatched edge; the garden sits within a larger wet world.
-	for i in range(70):
-		var x := fposmod(i * 73.7, size.x)
-		var y := fposmod(i * 119.3 + time * 8.0, size.y)
-		draw_line(Vector2(x, y), Vector2(x - 2, y + 12), Color(0.4, 0.6, 0.55, 0.018), 1.0)
+		var x: float = fposmod(m.x*size.x+floorf(sin(time*0.08+m.y*7)*5)*4,size.x)
+		var y: float = fposmod(m.y*size.y-floorf(time*m.z)*4,size.y)
+		draw_rect(Rect2(Vector2(floorf(x/2)*2,floorf(y/2)*2),Vector2(2,2)),Color(0.65,0.74,0.47,0.18+m.z*0.10))
 
-func _habitat_leaf(base: Vector2, tip: Vector2, width: float, color: Color, phase: float) -> void:
-	var axis: Vector2 = tip - base
-	var normal := Vector2(-axis.y, axis.x).normalized()
-	var contour := PackedVector2Array()
-	for i in range(23):
-		var t: float = float(i) / 22.0
-		var membrane: float = sin(t * PI) * width * (1 + sin(t * 19 + phase) * 0.035)
-		contour.append(base.lerp(tip, t) + normal * (membrane + sin(t * PI) * 5))
-	for i in range(22, -1, -1):
-		var t: float = float(i) / 22.0
-		contour.append(base.lerp(tip, t) - normal * sin(t * PI) * width * 0.65)
-	draw_colored_polygon(contour, color)
-	var vein := PackedVector2Array()
-	for i in range(15):
-		var t: float = float(i) / 14.0
-		vein.append(base.lerp(tip, t) + normal * sin(t * PI) * 2)
-	draw_polyline(vein, Color(0.35, 0.44, 0.33, color.a * 0.50), 0.65, true)
-	for i in range(3, 12, 3):
-		var t: float = float(i) / 14.0
-		var point: Vector2 = vein[i]
-		for side in [-1.0, 1.0]:
-			draw_line(point, point + normal * sin(t * PI) * width * side * 0.65 - axis.normalized() * 3, Color(0.32, 0.40, 0.30, color.a * 0.3), 0.5, true)
+func _cluster(origin: Vector2,width: float,height: float,color: Color,seed_value: int) -> void:
+	for j in range(maxi(1,int(height/4))):
+		var t: float = float(j)/maxf(1,height/4-1)
+		var span: float = maxf(4,floorf(sin(t*PI)*width/4)*4)
+		var offset: float = -4.0 if (j+seed_value)%4==0 else 0.0
+		_pixel_rect(origin.x-span/2+offset,origin.y-height+j*4,span,4,color)
+		if j%3==0: _pixel_rect(origin.x+offset,origin.y-height+j*4,4,4,color.lightened(0.045))

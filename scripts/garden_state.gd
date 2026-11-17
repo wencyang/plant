@@ -23,6 +23,8 @@ const SPECIES := [
 ]
 const STAT_NAMES := ["vitality", "growth", "toxin", "root", "bloom", "shade"]
 const DISPLAY_THRESHOLDS := [100, 180, 260, 340, 420, 500]
+const WILD_BIOMES := {"Mosswood": [0, 1, 2], "Sporefen": [3, 4, 6], "Amber Hollow": [1, 5, 3], "Sunken Glade": [6, 2, 4]}
+const WILD_CATCH_CHANCES := {"Common": 0.90, "Uncommon": 0.80, "Rare": 0.70, "Epic": 0.65, "Legendary": 0.65}
 
 var save_path: String = SAVE_PATH
 var plants: Dictionary = {}
@@ -37,6 +39,8 @@ var claimed: Array = []
 var collection_claimed: Array = []
 var collection_seen: Dictionary = {}
 var plant_order: Array = []
+var field_kits: int = 12
+var expedition: Dictionary = {}
 var last_daily: int = 0
 var last_seed_collection: int = 0
 var id_counter: int = 0
@@ -55,6 +59,8 @@ func new_game() -> void:
 	collection_seen.clear()
 	seed_bank.clear()
 	resources = {"sunlight": 180, "agents": 3, "grafts": 3}
+	field_kits = 12
+	expedition = _default_expedition()
 	bed = ["", "", "", "", "", "", "", "", ""]
 	display_bed = ["", "", "", "", "", ""]
 	wins = 0
@@ -737,6 +743,211 @@ func _offspring_name(rng: RandomNumberGenerator) -> String:
 func _failure(message: String) -> Dictionary:
 	return {"ok": false, "message": message}
 
+func _default_expedition() -> Dictionary:
+	return {"map_seed": 813931, "position": [15, 18], "steps": 0,
+		"encounters": 0, "captures": 0, "discovered_biomes": ["Mosswood"],
+		"collected_sites": [], "active_encounter": {}, "site_records": {},
+		"respawn_day": int(Time.get_unix_time_from_system()) / 86400}
+
+func _normalise_expedition(value: Variant) -> Dictionary:
+	var result: Dictionary = _default_expedition()
+	if value is Dictionary:
+		for key: String in result:
+			if value.has(key): result[key] = value[key]
+	result.position = [clampi(int(result.position[0]), 0, 39), clampi(int(result.position[1]), 0, 31)]
+	return result
+
+func _valid_expedition(value: Variant) -> bool:
+	if not value is Dictionary: return false
+	var data: Dictionary = value
+	if data.has("position"):
+		if not data.position is Array or data.position.size() != 2: return false
+		for coordinate: Variant in data.position:
+			if not (coordinate is float or coordinate is int): return false
+	for key: String in ["steps", "encounters", "captures", "map_seed", "respawn_day"]:
+		if data.has(key) and not (data[key] is float or data[key] is int): return false
+	for key: String in ["discovered_biomes", "collected_sites"]:
+		if data.has(key) and not data[key] is Array: return false
+	for key: String in ["active_encounter", "site_records"]:
+		if data.has(key) and not data[key] is Dictionary: return false
+	if data.has("site_records"):
+		for site: Variant in data.site_records:
+			if not site is String or not data.site_records[site] is Dictionary: return false
+	if data.has("active_encounter") and not data.active_encounter.is_empty():
+		var encounter: Dictionary = data.active_encounter
+		for key: String in ["plant", "site_id", "biome", "encounter_id", "capture_chance", "attempts", "observed"]:
+			if not encounter.has(key): return false
+		if not encounter.plant is Dictionary: return false
+		for key: String in ["id", "seed", "name", "species", "type", "genes", "stats", "parents", "skills"]:
+			if not encounter.plant.has(key): return false
+		if not encounter.site_id is String or not encounter.encounter_id is String or not encounter.biome is String: return false
+		if not encounter.observed is bool: return false
+		if not (encounter.attempts is int or encounter.attempts is float): return false
+		if not (encounter.capture_chance is int or encounter.capture_chance is float): return false
+	return true
+
+func begin_expedition() -> Dictionary:
+	if expedition.is_empty(): expedition = _default_expedition()
+	var day: int = int(Time.get_unix_time_from_system()) / 86400
+	if int(expedition.respawn_day) != day:
+		expedition.respawn_day = day
+		expedition.collected_sites.clear()
+		expedition.site_records.clear()
+		expedition.active_encounter.clear()
+	save_game()
+	return expedition
+
+func move_explorer(x: int, y: int) -> void:
+	if expedition.is_empty(): expedition = _default_expedition()
+	if not expedition.active_encounter.is_empty(): return
+	var next: Array = [clampi(x, 0, 39), clampi(y, 0, 31)]
+	if next == expedition.position: return
+	# Navigation owns collision and paths; the model counts tiles actually traversed.
+	expedition.steps += absi(int(next[0]) - int(expedition.position[0])) + absi(int(next[1]) - int(expedition.position[1]))
+	expedition.position = next
+	save_game()
+
+func wild_encounter(biome: String = "Mosswood", site_id: String = "") -> Dictionary:
+	begin_expedition()
+	if not WILD_BIOMES.has(biome): return _failure("This habitat has not been mapped.")
+	if site_id.is_empty(): site_id = "%s_%d_%d" % [biome, expedition.position[0], expedition.position[1]]
+	if not expedition.active_encounter.is_empty():
+		if str(expedition.active_encounter.site_id) != site_id:
+			return _failure("Finish observing this organism before moving to another patch.")
+		return _encounter_result("The same wild specimen is still here.")
+	if expedition.collected_sites.has(site_id): return _failure("This patch is resting. New wild growth returns next field day.")
+	var record: Dictionary = expedition.site_records.get(site_id, {"attempts": 0, "observed": false, "fled": false})
+	if bool(record.get("fled", false)): return _failure("The plant withdrew into its roots. This patch will regrow next field day.")
+	var organism_seed: int = maxi(1, absi(("%d/%s/%d" % [expedition.map_seed, site_id, expedition.respawn_day]).hash()))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = organism_seed
+	var pool: Array = WILD_BIOMES[biome]
+	var species_index: int = int(pool[rng.randi_range(0, pool.size() - 1)])
+	# The first reachable patch is a readable, familiar organism; later biomes expand the atlas.
+	if site_id == "moss_01": species_index = 0
+	var p: Dictionary = _create_base(species_index, organism_seed, "wild_%d" % organism_seed)
+	p.name = _offspring_name(rng)
+	var rare_roll: float = rng.randf()
+	if site_id != "moss_01":
+		if rare_roll < 0.10:
+			p.genes.pattern.dominant = "Starburst" if rng.randf() < 0.5 else "Bicolor Ring"
+			p.genes.glow.dominant = "Veins" if rng.randf() < 0.5 else "Spore dust"
+		elif rare_roll < 0.30:
+			p.genes.pattern.dominant = "Starburst" if rng.randf() < 0.5 else "Bicolor Ring"
+		if rng.randf() < 0.20: p.genes.color.dominant = COLORS[rng.randi_range(0, COLORS.size() - 1)]
+		# Deep-field traps remain rare: 4% after ten successful collections.
+		if biome == "Sunken Glade" and int(expedition.captures) >= 10 and rng.randf() < 0.04:
+			p.type = "Carnivorous"
+			p.species = "Hollow Pitcher"
+			p.secondary_type = "Parasite"
+			p.skills = ["Devour"]
+			p.skill_genes = {"dominant": "Devour", "recessive": "Parasitic Tendril"}
+			p.genes.shape.dominant = "Split"
+			p.genes.form.dominant = "Upright"
+			p.genes.glow.dominant = "Pulsing core"
+	p.rarity = _calculate_rarity(p)
+	p["origin"] = {"kind": "wild", "biome": biome, "site": site_id, "found_at": int(Time.get_unix_time_from_system())}
+	var observed: bool = bool(record.get("observed", false))
+	var chance: float = minf(0.98, float(WILD_CATCH_CHANCES.get(p.rarity, 0.90)) + (0.15 if observed else 0.0))
+	expedition.active_encounter = {"plant": p, "biome": biome, "site_id": site_id,
+		"encounter_id": "encounter_%d" % organism_seed, "capture_chance": chance,
+		"observed": observed, "attempts": int(record.get("attempts", 0)), "base_chance": WILD_CATCH_CHANCES.get(p.rarity, 0.90)}
+	expedition.site_records[site_id] = record
+	expedition.encounters += 1
+	if not expedition.discovered_biomes.has(biome): expedition.discovered_biomes.append(biome)
+	save_game()
+	return _encounter_result("A wild %s is growing here. Observe its rhythms before taking a cutting." % p.species)
+
+func _encounter_result(message: String) -> Dictionary:
+	var active: Dictionary = expedition.active_encounter
+	return {"ok": true, "message": message, "plant": active.plant,
+		"encounter_id": active.encounter_id, "capture_chance": capture_odds(),
+		"chance": capture_odds(), "observed": active.observed,
+		"rare": RARITIES.find(active.plant.rarity) >= 2}
+
+func capture_odds(method: String = "gather") -> float:
+	if expedition.is_empty() or expedition.active_encounter.is_empty(): return 0.0
+	var chance: float = float(expedition.active_encounter.capture_chance)
+	if method == "entangle" and _has_mature_vine(): chance += 0.10
+	return clampf(chance, 0.0, 0.98)
+
+func _has_mature_vine() -> bool:
+	for id: String in plant_order:
+		var p: Dictionary = plants[id]
+		if bool(p.mature) and (p.type == "Vine" or p.secondary_type == "Vine"): return true
+	return false
+
+func resolve_wild_capture(method: String = "gather") -> Dictionary:
+	if expedition.is_empty() or expedition.active_encounter.is_empty(): return _failure("Find a wild plant in the field first.")
+	var active: Dictionary = expedition.active_encounter
+	var site: String = str(active.site_id)
+	var record: Dictionary = expedition.site_records.get(site, {"attempts": 0, "observed": false, "fled": false})
+	if method == "observe":
+		if bool(active.observed): return _failure("You have already studied this specimen. Its collection odds are shown below.")
+		active.observed = true
+		active.capture_chance = minf(0.98, float(active.capture_chance) + 0.15)
+		record.observed = true
+		expedition.site_records[site] = record
+		save_game()
+		return {"ok": true, "caught": false, "fled": false, "observed": true, "plant": active.plant,
+			"chance": capture_odds(), "capture_chance": capture_odds(),
+			"message": "You learned its rhythm. Collection odds rose by 15 points, up to 98%. No kit was used."}
+	if method not in ["gather", "entangle"]: return _failure("Choose Observe, Gather, or a supporting vine.")
+	if field_kits <= 0: return _failure("No field kits remain. Refill five kits for 20 gathered light, or return home.")
+	if method == "entangle":
+		if not _has_mature_vine(): return _failure("A mature Vine specimen is needed to steady these roots.")
+		if int(resources.sunlight) < 5: return _failure("A supporting vine needs 5 gathered light.")
+	var chance: float = capture_odds(method)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = maxi(1, int(active.plant.seed) + int(active.attempts) * 104729 + 26771)
+	var caught: bool = rng.randf() < chance
+	field_kits -= 1
+	if method == "entangle": resources.sunlight -= 5
+	active.attempts = int(active.attempts) + 1
+	record.attempts = active.attempts
+	if caught:
+		var p: Dictionary = active.plant.duplicate(true)
+		p.id = _new_id()
+		p.mature = true
+		p.ready_at = int(Time.get_unix_time_from_system())
+		p.origin["collected_at"] = int(Time.get_unix_time_from_system())
+		_add_plant(p)
+		expedition.captures += 1
+		expedition.collected_sites.append(site)
+		expedition.site_records[site] = record
+		expedition.active_encounter = {}
+		save_game()
+		return {"ok": true, "caught": true, "fled": false, "plant": p, "chance": chance,
+			"message": "%s joined your living collection. Its wild genes are ready to battle, display, and breed." % p.name}
+	var fled: bool = rng.randf() < 0.25
+	record.fled = fled
+	expedition.site_records[site] = record
+	var p: Dictionary = active.plant
+	if fled: expedition.active_encounter = {}
+	save_game()
+	return {"ok": true, "caught": false, "fled": fled, "plant": p, "chance": chance,
+		"message": "The plant withdrew below the soil. This patch will regrow next field day." if fled else "The cutting did not take. The wild plant remains; you may try another field kit."}
+
+func leave_wild_encounter() -> void:
+	if expedition.is_empty(): return
+	expedition.active_encounter = {}
+	save_game()
+
+func restock_field_kits() -> Dictionary:
+	if int(resources.sunlight) < 20: return _failure("Five field kits need 20 gathered light. Garden rewards replenish it.")
+	resources.sunlight -= 20
+	field_kits += 5
+	save_game()
+	return {"ok": true, "message": "Field satchel refilled: +5 kits for 20 gathered light.", "kits": field_kits}
+
+func field_status() -> Dictionary:
+	if expedition.is_empty(): expedition = _default_expedition()
+	return {"kits": field_kits, "field_kits": field_kits, "steps": expedition.steps,
+		"encounters": expedition.encounters, "captures": expedition.captures,
+		"discovered_biomes": expedition.discovered_biomes.duplicate(),
+		"active_encounter": expedition.active_encounter, "chance": capture_odds(),
+		"can_entangle": _has_mature_vine()}
+
 func save_game() -> void:
 	var payload: Dictionary = {
 		"version": SAVE_VERSION, "plants": plants, "bed": bed,
@@ -744,6 +955,7 @@ func save_game() -> void:
 		"seed_bank": seed_bank, "wins": wins, "battles": battles,
 		"discovered": discovered, "claimed": claimed, "plant_order": plant_order,
 		"collection_claimed": collection_claimed, "collection_seen": collection_seen,
+		"field_kits": field_kits, "expedition": expedition,
 		"last_daily": last_daily, "last_seed_collection": last_seed_collection,
 		"id_counter": id_counter
 	}
@@ -779,6 +991,8 @@ func load_game() -> bool:
 	claimed = payload.get("claimed", [])
 	collection_claimed = payload.get("collection_claimed", [])
 	collection_seen = payload.get("collection_seen", {})
+	field_kits = maxi(0, int(payload.get("field_kits", 12)))
+	expedition = _normalise_expedition(payload.get("expedition", {}))
 	plant_order = payload.get("plant_order", plants.keys())
 	last_daily = int(payload.get("last_daily", 0))
 	last_seed_collection = int(payload.get("last_seed_collection", 0))
@@ -817,6 +1031,10 @@ func _valid_save(value: Variant) -> bool:
 	for entry: Variant in data.plant_order:
 		if not entry is String or not data.plants.has(entry):
 			return false
+	if data.has("field_kits") and not (data.field_kits is float or data.field_kits is int):
+		return false
+	if data.has("expedition") and not _valid_expedition(data.expedition):
+		return false
 	if data.has("collection_claimed") and not data.collection_claimed is Array:
 		return false
 	if data.has("collection_seen"):
