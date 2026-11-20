@@ -96,6 +96,15 @@ func run() -> void:
 	check(game.modal_kind == "wild_encounter" and game.wilderness.waiting,"E investigates a nearby wild plant through the real world-to-garden signal")
 	check_modal("Desktop wild encounter")
 	var first_seed: int = game.state.expedition.active_encounter.plant.seed
+	var wild_id: String = str(game.state.expedition.active_encounter.plant.id)
+	game._open_dna(wild_id)
+	await settle()
+	check(game.modal_kind=="dna" and str(game.modal.get_meta("dna_plant_id",""))==wild_id,"Wild organism DNA can be inspected before collection")
+	check(not game.state.expedition.active_encounter.is_empty() and game.wilderness.waiting,"DNA inspection preserves the exact wild encounter and pauses walking")
+	check_modal("Desktop wild DNA")
+	game._show_wild_encounter()
+	await settle()
+	check(game.state.expedition.active_encounter.plant.seed==first_seed,"Returning from DNA keeps the same wild genome")
 	var first_chance: float = game.state.capture_odds()
 	var kits_before: int = game.state.field_kits
 	game._wild_action("observe")
@@ -206,9 +215,33 @@ func run() -> void:
 	check(game.parent_a == collected_id,"wild companion can be carried into the breeding laboratory")
 	game._crossbreed()
 	await settle()
+	check(game.state.plant_order.size() == original_order.size()+1 and game.state.pollinations.has(collected_id),"wild pollination keeps the owned archive unchanged until its seed is planted")
+	if not game.state.pollinations.has(collected_id):
+		quit(1)
+		return
+	game.state.pollinations[collected_id].ready_at = 0
+	game._open_seeds()
+	await settle()
+	game._harvest_fruit(collected_id)
+	await settle()
+	var crossed_fruit: Dictionary = {}
+	for fruit: Dictionary in game.state.fruit_inventory:
+		if fruit.kind == "hybrid" and str(fruit.mother_id) == collected_id: crossed_fruit = fruit
+	check(not crossed_fruit.is_empty(),"wild parent produces a harvestable hybrid fruit")
+	if crossed_fruit.is_empty():
+		quit(1)
+		return
+	var hybrid_seed_index: int = game.state.seed_bank.size()
+	game._extract_fruit(str(crossed_fruit.id))
+	await settle()
+	game._plant_saved_seed(hybrid_seed_index)
+	await settle()
 	var child_id: String = str(game.state.plant_order.back())
 	check(game.modal_kind == "reveal" and game.state.get_plant(child_id).parents.has(collected_id),"wild collection closes the loop into a second-generation offspring")
 	game._close_modal()
+	# Newly sown seeds occupy the first free soil cell. Bench this nursery plant
+	# deliberately before verifying that the expedition kept the original beds.
+	game._drop_plant(child_id,"tray",0)
 	game.state.save_game()
 	var restored: RefCounted = State.new(save_path)
 	check(restored.load_game(),"collected garden and expedition reload together")

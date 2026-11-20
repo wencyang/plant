@@ -1,10 +1,17 @@
 extends RefCounted
 class_name GardenState
+const Care = preload("res://scripts/plant_care.gd")
 
 ## All organisms, including retired donors and every ancestor, remain in this archive.
 ## Visuals are derived from diploid genes and seed; no baked appearance is saved.
 const SAVE_PATH := "user://conservatory_v1.json"
 const SAVE_VERSION := 1
+const POLLINATION_COST: int = 10
+const FRUIT_GROW_SECONDS: int = 18
+const NATURAL_FRUIT_SECONDS: int = 45
+const GROW_SECONDS: int = Care.GROW_SECONDS
+const AGING_SECONDS: int = Care.AGING_SECONDS
+const WITHER_SECONDS: int = Care.WITHER_SECONDS
 const TYPES := ["Leaf", "Bloom", "Vine", "Root", "Spore", "Toxin", "Parasite", "Carnivorous"]
 const RARITIES := ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
 const PATTERNS := ["Solid", "Striped", "Spotted", "Gradient", "Starburst", "Bicolor Ring"]
@@ -23,7 +30,14 @@ const SPECIES := [
 ]
 const STAT_NAMES := ["vitality", "growth", "toxin", "root", "bloom", "shade"]
 const DISPLAY_THRESHOLDS := [100, 180, 260, 340, 420, 500]
-const WILD_BIOMES := {"Mosswood": [0, 1, 2], "Sporefen": [3, 4, 6], "Amber Hollow": [1, 5, 3], "Sunken Glade": [6, 2, 4]}
+const WORLD_WIDTH: int = 160
+const WORLD_HEIGHT: int = 128
+const WILD_BIOMES := {
+	"Mosswood": [0, 1, 2], "Sporefen": [3, 4, 6],
+	"Amber Hollow": [1, 5, 3], "Sunken Glade": [6, 2, 4],
+	"Glassfall Coast": [2, 3, 0, 1], "Moonfen": [4, 6, 5],
+	"Ember Ridge": [5, 1, 3], "Ancient Grove": [3, 2, 6, 4]
+}
 const WILD_CATCH_CHANCES := {"Common": 0.90, "Uncommon": 0.80, "Rare": 0.70, "Epic": 0.65, "Legendary": 0.65}
 
 var save_path: String = SAVE_PATH
@@ -32,6 +46,11 @@ var bed: Array = []
 var display_bed: Array = []
 var resources: Dictionary = {"sunlight": 180, "agents": 3, "grafts": 3}
 var seed_bank: Array = []
+var fruit_inventory: Array = []
+var fruit_crops: Dictionary = {}
+var pollinations: Dictionary = {}
+var reproduction_counter: int = 0
+var _ready_reproduction: Dictionary = {}
 var wins: int = 0
 var battles: int = 0
 var discovered: Array = []
@@ -58,6 +77,11 @@ func new_game() -> void:
 	collection_claimed.clear()
 	collection_seen.clear()
 	seed_bank.clear()
+	fruit_inventory.clear()
+	fruit_crops.clear()
+	pollinations.clear()
+	_ready_reproduction.clear()
+	reproduction_counter = 0
 	resources = {"sunlight": 180, "agents": 3, "grafts": 3}
 	field_kits = 12
 	expedition = _default_expedition()
@@ -87,6 +111,81 @@ func new_game() -> void:
 
 func get_plant(id: String) -> Dictionary:
 	return plants.get(id, {})
+
+func care_tools() -> Array:
+	return Care.tools()
+
+func plant_measurements(id: String) -> Dictionary:
+	return Care.measurements(get_plant(id))
+
+func care_status(id: String,tool_key: String) -> Dictionary:
+	var definition: Dictionary = Care.tool(tool_key)
+	var result: Dictionary = {"allowed":false,"reason":"Choose a care tool.","cost":int(definition.get("cost",0)),"effect":str(definition.get("effect","")),"cooldown_remaining":0,"uses":0,"max_uses":int(definition.get("max_uses",0)),"remaining_uses":0,"key":tool_key}
+	if definition.is_empty(): return result
+	var plant: Dictionary = get_plant(id)
+	if plant.is_empty(): result.reason="Choose a plant to care for."; return result
+	var care: Dictionary = plant.get("care",Care.default_care())
+	var count: int = int(care.get("uses",{}).get(tool_key,0))
+	var now: int = int(Time.get_unix_time_from_system())
+	result.uses=count
+	result.remaining_uses=maxi(0,int(definition.max_uses)-count)
+	result.cooldown_remaining=maxi(0,ceili(float(care.get("cooldowns",{}).get(tool_key,0))-now))
+	if bool(life_profile(id).withered): result.reason="Withered plants cannot receive care. Grow their seeds to continue the lineage."; return result
+	if count>=int(definition.max_uses): result.reason="This plant has received the maximum number of uses for this tool."; return result
+	if int(result.cooldown_remaining)>0: result.reason="This tool will be ready for this plant in %d seconds." % int(result.cooldown_remaining); return result
+	if tool_key=="sunlamp" and (bool(plant.get("mature",false)) or int(plant.get("ready_at",0))<=now): result.reason="The sun lamp is for a seedling that is still growing."; return result
+	if tool_key=="ripening":
+		var natural_growing: bool = fruit_crops.has(id) and int(fruit_crops[id].natural_ready_at)>now
+		var cross_growing: bool = pollinations.has(id) and int(pollinations[id].ready_at)>now
+		if not natural_growing and not cross_growing: result.reason="There is no developing fruit to ripen on this plant."; return result
+	if int(resources.sunlight)<int(definition.cost): result.reason="This tool needs %d gathered light." % int(definition.cost); return result
+	result.allowed=true
+	result.reason="Ready to use."
+	return result
+
+func apply_care(id: String,tool_key: String) -> Dictionary:
+	var status: Dictionary = care_status(id,tool_key)
+	if not bool(status.allowed): return {"ok":false,"message":status.reason,"key":tool_key,"status":status}
+	var plant: Dictionary = get_plant(id)
+	Care.initialize(plant)
+	var care: Dictionary = plant.care
+	var definition: Dictionary = Care.tool(tool_key)
+	var before: Dictionary = plant_measurements(id)
+	var before_life: Dictionary = life_profile(id)
+	var before_fruit: int = int(fruit_status(id).ready_count)
+	var now: int = int(Time.get_unix_time_from_system())
+	resources.sunlight-=int(definition.cost)
+	care.uses[tool_key]=int(care.uses.get(tool_key,0))+1
+	if int(definition.cooldown)>0: care.cooldowns[tool_key]=now+int(definition.cooldown)
+	care["last_tool"]=tool_key
+	care["last_cared_at"]=now
+	var message: String = ""
+	match tool_key:
+		"water":
+			care.life_bonus_seconds=int(care.life_bonus_seconds)+60
+			message="%s looks refreshed. Its lifespan grew by 1 minute." % plant.name
+		"longevity":
+			care.life_bonus_seconds=int(care.life_bonus_seconds)+600
+			message="%s can keep growing for 10 more minutes." % plant.name
+		"growth": care.height_bonus=minf(0.60,float(care.height_bonus)+0.15)
+		"compost": care.weight_bonus=minf(0.80,float(care.weight_bonus)+0.20)
+		"sunlamp":
+			plant.mature=true
+			plant.ready_at=now
+			_ensure_natural_crop(id,now)
+			message="%s unfurled under the lamp and is ready to breed." % plant.name
+		"ripening":
+			if fruit_crops.has(id) and int(fruit_crops[id].natural_ready_at)>now: fruit_crops[id].natural_ready_at=now
+			if pollinations.has(id) and int(pollinations[id].ready_at)>now: pollinations[id].ready_at=now
+	var after: Dictionary = plant_measurements(id)
+	var after_life: Dictionary = life_profile(id)
+	var newly_ripe: int = maxi(0,int(fruit_status(id).ready_count)-before_fruit)
+	if tool_key=="growth": message="%s stands taller: %.1f → %.1f cm at maturity." % [plant.name,before.mature_height_cm,after.mature_height_cm]
+	elif tool_key=="compost": message="%s grew sturdier: %.1f → %.1f g at maturity." % [plant.name,before.mature_weight_g,after.mature_weight_g]
+	elif tool_key=="ripening": message="%s has %d newly ripened fruit." % [plant.name,newly_ripe]
+	save_game()
+	return {"ok":true,"message":message,"key":tool_key,"plant":plant,"measurements":after,"life":after_life,
+		"effects":{"life_added_seconds":int(after_life.life_limit)-int(before_life.life_limit),"height_added_cm":float(after.mature_height_cm)-float(before.mature_height_cm),"weight_added_g":float(after.mature_weight_g)-float(before.mature_weight_g),"fruit_ready":newly_ripe,"matured":tool_key=="sunlamp"}}
 
 func _new_id() -> String:
 	id_counter += 1
@@ -137,14 +236,63 @@ func _create_base(species_index: int, gene_seed: int = 0, organism_id: String = 
 		"mature": true, "ready_at": now, "born_at": now,
 		"donor_ready_at": 0, "deformed": false, "retired": false
 	}
+	p["life_age"] = 0.0
+	p["withered"] = false
+	Care.initialize(p)
+	p["gene_sources"] = {}
+	for slot: String in genes:
+		p.gene_sources[slot] = {"allele_a":{"parent_id":"","parent_name":s.name,"allele":"founder","value":genes[slot].dominant},
+			"allele_b":{"parent_id":"","parent_name":s.name,"allele":"founder","value":genes[slot].recessive},
+			"expressed_origin":"founder","expressed":genes[slot].dominant,"carried":genes[slot].recessive}
 	return p
 
 func _add_plant(p: Dictionary) -> void:
+	Care.initialize(p)
+	p["lineage_mix"] = lineage_composition(p)
+	p["hybrid"] = p.lineage_mix.size() > 1
 	plants[p.id] = p
 	plant_order.append(p.id)
 	if not discovered.has(p.species):
 		discovered.append(p.species)
 	_record_collection(p)
+	_ensure_natural_crop(str(p.id))
+
+func lineage_composition(p: Dictionary) -> Dictionary:
+	return _lineage_composition(p,{}, {})
+
+func _lineage_composition(p: Dictionary, memo: Dictionary, visiting: Dictionary) -> Dictionary:
+	if p.is_empty(): return {}
+	var id: String = str(p.get("id",""))
+	if memo.has(id) and not id.is_empty(): return memo[id].duplicate()
+	var result: Dictionary = {}
+	var stored: Variant = p.get("lineage_mix",{})
+	if stored is Dictionary:
+		for key: Variant in stored:
+			if key is String and key in TYPES and (stored[key] is int or stored[key] is float) and is_finite(float(stored[key])) and float(stored[key]) > 0:
+				result[key] = float(stored[key])
+	if result.is_empty() and not visiting.has(id):
+		visiting[id] = true
+		var parent_mixes: Array = []
+		for parent_id: Variant in p.get("parents",[]):
+			if parent_id is String and plants.has(parent_id) and not visiting.has(parent_id):
+				parent_mixes.append(_lineage_composition(plants[parent_id],memo,visiting))
+		for composition: Dictionary in parent_mixes:
+			for key: String in composition:
+				result[key] = float(result.get(key,0.0))+float(composition[key])/maxi(1,parent_mixes.size())
+		visiting.erase(id)
+	if result.is_empty(): result[str(p.get("type","Leaf"))] = 1.0
+	var total: float = 0.0
+	for value: float in result.values(): total += value
+	for key: String in result: result[key] = float(result[key])/maxf(0.000001,total)
+	if not id.is_empty(): memo[id] = result.duplicate()
+	return result
+
+func _combined_lineage(a: Dictionary,b: Dictionary) -> Dictionary:
+	var result: Dictionary = {}
+	for parent: Dictionary in [a,b]:
+		var composition: Dictionary = lineage_composition(parent)
+		for key: String in composition: result[key] = float(result.get(key,0.0))+float(composition[key])*0.5
+	return result
 
 func crossbreed(id_a: String, id_b: String) -> Dictionary:
 	var a: Dictionary = get_plant(id_a)
@@ -155,6 +303,7 @@ func crossbreed(id_a: String, id_b: String) -> Dictionary:
 		return _failure("Choose two different plants to crossbreed.")
 	if not a.mature or not b.mature:
 		return _failure("Both parents must finish growing first.")
+	if bool(a.get("withered",false)) or bool(b.get("withered",false)): return _failure("Withered plants remain in the lineage archive. Grow their seeds to continue breeding.")
 	if int(resources.sunlight) < 30:
 		return _failure("Crossbreeding needs 30 gathered light. Battles and display rewards replenish it.")
 	var p: Dictionary = _make_offspring(a, b, random.randi())
@@ -175,24 +324,36 @@ func _make_offspring(a: Dictionary, b: Dictionary, child_seed: int, child_id: St
 		p.secondary_type = b.type if p.type == a.type else a.type
 	p.generation = maxi(int(a.generation), int(b.generation)) + 1
 	p.parents = [a.id, b.id]
-	p["hybrid"] = a.species != b.species
-	p["lineage_name"] = "%s × %s" % [a.species, b.species]
+	p["lineage_mix"] = _combined_lineage(a,b)
+	p["hybrid"] = p.lineage_mix.size() > 1
+	p["lineage_name"] = " × ".join(p.lineage_mix.keys())
 	p.name = _offspring_name(rng)
 	for slot: String in a.genes:
 		var gene_a: Dictionary = a.genes[slot]
 		var gene_b: Dictionary = b.genes.get(slot, gene_a)
-		var allele_a: Variant = gene_a.dominant if rng.randf() < 0.5 else gene_a.recessive
-		var allele_b: Variant = gene_b.dominant if rng.randf() < 0.5 else gene_b.recessive
-		var expressed: Variant = allele_a if rng.randf() < 0.5 else allele_b
-		var carried: Variant = allele_b if expressed == allele_a else allele_a
+		var a_key: String = "dominant" if rng.randf()<0.5 else "recessive"
+		var b_key: String = "dominant" if rng.randf()<0.5 else "recessive"
+		var allele_a: Variant = gene_a[a_key]
+		var allele_b: Variant = gene_b[b_key]
+		var expresses_a: bool = rng.randf()<0.5
+		var expressed: Variant = allele_a if expresses_a else allele_b
+		var carried: Variant = allele_b if expresses_a else allele_a
+		var expressed_origin: String = "a" if expresses_a else "b"
 		if slot in ["color", "accent"] and rng.randf() < 0.15:
 			expressed = Color(str(allele_a)).lerp(Color(str(allele_b)), 0.5).to_html(false)
+			expressed_origin = "blend"
 		if slot == "pattern" and int(p.generation) >= 3 and allele_a != allele_b and rng.randf() < 0.08:
 			expressed = "Starburst" if rng.randf() < 0.5 else "Bicolor Ring"
+			expressed_origin = "combination"
 		p.genes[slot] = {"dominant": expressed, "recessive": carried}
+		p.gene_sources[slot] = {"allele_a":{"parent_id":a.id,"parent_name":a.name,"allele":a_key,"value":allele_a},
+			"allele_b":{"parent_id":b.id,"parent_name":b.name,"allele":b_key,"value":allele_b},
+			"expressed_origin":expressed_origin,"expressed":expressed,"carried":carried}
+	p["stat_sources"] = {}
 	for stat: String in STAT_NAMES:
 		var average: float = (float(a.stats[stat]) + float(b.stats[stat])) * 0.5
 		p.stats[stat] = maxi(1, int(round(average * rng.randf_range(0.9, 1.1))))
+		p.stat_sources[stat] = {"parent_a":a.id,"parent_b":b.id,"value_a":a.stats[stat],"value_b":b.stats[stat],"average":average,"value":p.stats[stat]}
 	var a_skills: Dictionary = a.get("skill_genes", {"dominant": a.skills[0], "recessive": a.skills[0]})
 	var b_skills: Dictionary = b.get("skill_genes", {"dominant": b.skills[0], "recessive": b.skills[0]})
 	var skill_a: String = str(a_skills.dominant if rng.randf() < 0.5 else a_skills.recessive)
@@ -201,10 +362,18 @@ func _make_offspring(a: Dictionary, b: Dictionary, child_seed: int, child_id: St
 	p.skill_genes = {"dominant": p.skills[0], "recessive": skill_b if p.skills[0] == skill_a else skill_a}
 	if skill_a != skill_b and rng.randf() < 0.3:
 		p.skills = [skill_a, skill_b]
+	p["skill_sources"] = {"parent_a":a.id,"parent_b":b.id,"allele_a":skill_a,"allele_b":skill_b,"expressed":p.skills.duplicate()}
 	# Graft inheritance is deliberately reduced; inherited joins stay in the pedigree.
+	p["inherited_graft_records"] = []
 	for parent: Dictionary in [a, b]:
-		for graft_record: Dictionary in parent.graft_history:
+		var graft_records: Array = parent.get("graft_history",[]).duplicate(true)
+		graft_records.append_array(parent.get("inherited_graft_records",[]))
+		for graft_record: Dictionary in graft_records:
 			if rng.randf() < 0.2:
+				if p.inherited_graft_records.size() < 2:
+					var inherited: Dictionary = graft_record.duplicate(true)
+					inherited["inherited_from"] = parent.id
+					p.inherited_graft_records.append(inherited)
 				if graft_record.get("trait", "") == "skill" and p.skills.size() < 3:
 					var graft_skill: String = str(graft_record.get("value", ""))
 					if not p.skills.has(graft_skill) and not graft_skill.is_empty():
@@ -213,8 +382,208 @@ func _make_offspring(a: Dictionary, b: Dictionary, child_seed: int, child_id: St
 					p["inherited_graft_color"] = graft_record.get("value", "c1a4a0")
 	p.rarity = _calculate_rarity(p)
 	p.mature = false
-	p.ready_at = int(Time.get_unix_time_from_system()) + 12
+	p.ready_at = int(Time.get_unix_time_from_system()) + GROW_SECONDS
 	return p
+
+func _ensure_natural_crop(id: String, now: int = -1) -> bool:
+	if not plants.has(id) or not bool(plants[id].get("mature",false)) or bool(plants[id].get("withered",false)) or fruit_crops.has(id): return false
+	if now < 0: now = int(Time.get_unix_time_from_system())
+	fruit_crops[id] = {"natural_ready_at":now+NATURAL_FRUIT_SECONDS}
+	return true
+
+func life_profile(id: String) -> Dictionary:
+	var plant: Dictionary = get_plant(id)
+	var age: float = maxf(0.0,float(plant.get("life_age",0.0)))
+	var limits: Dictionary = Care.life_limits(plant)
+	var withered: bool = bool(plant.get("withered",false)) or age>=float(limits.life_limit)
+	var stage: String = "withered" if withered else ("seedling" if not bool(plant.get("mature",false)) else ("aging" if age>=float(limits.aging_at) else "mature"))
+	return {"stage":stage,"age":age,"remaining":maxi(0,ceili(float(limits.life_limit)-age)),"progress":clampf(age/float(limits.life_limit),0.0,1.0),"withered":withered,"aging_at":float(limits.aging_at),"life_limit":float(limits.life_limit),"life_bonus_seconds":float(limits.bonus_seconds)}
+
+func advance_lifecycle(delta: float) -> bool:
+	if not is_finite(delta) or delta<=0: return false
+	var changed: bool = false
+	var now: int = int(Time.get_unix_time_from_system())
+	for id: String in plant_order:
+		var plant: Dictionary = plants[id]
+		if not bool(plant.get("mature",false)) or bool(plant.get("withered",false)): continue
+		var previous_stage: String = str(life_profile(id).stage)
+		var limit: float = float(Care.life_limits(plant).life_limit)
+		plant["life_age"] = minf(limit,maxf(0,float(plant.get("life_age",0.0)))+delta)
+		if float(plant.life_age)>=limit:
+			plant["withered"] = true
+			plant["retired"] = true
+			for index in range(bed.size()):
+				if str(bed[index])==id: bed[index] = ""
+			for index in range(display_bed.size()):
+				if str(display_bed[index])==id: display_bed[index] = ""
+			# A final seed-bearing fruit is retained even when a plant reaches the
+			# end of its life. Existing pollinated embryos remain untouched too.
+			if not fruit_crops.has(id): fruit_crops[id] = {"natural_ready_at":now,"final":true}
+			else:
+				fruit_crops[id].natural_ready_at = mini(now,int(fruit_crops[id].natural_ready_at))
+				fruit_crops[id]["final"] = true
+		if previous_stage!=str(life_profile(id).stage): changed = true
+	return changed
+
+func tick_reproduction() -> bool:
+	var now: int = int(Time.get_unix_time_from_system())
+	var initialized: bool = false
+	var ready: Dictionary = {}
+	for id: String in plant_order:
+		initialized = _ensure_natural_crop(id,now) or initialized
+		if fruit_crops.has(id) and now >= int(fruit_crops[id].natural_ready_at):
+			ready[id+"/natural/"+str(fruit_crops[id].natural_ready_at)] = true
+		if pollinations.has(id) and now >= int(pollinations[id].ready_at): ready[str(pollinations[id].id)] = true
+	var changed: bool = initialized or ready != _ready_reproduction
+	_ready_reproduction = ready
+	if initialized: save_game()
+	return changed
+
+func fruit_status(plant_id: String) -> Dictionary:
+	var plant: Dictionary = get_plant(plant_id)
+	var crop: Dictionary = fruit_crops.get(plant_id,{})
+	var batch: Dictionary = pollinations.get(plant_id,{})
+	var now: int = int(Time.get_unix_time_from_system())
+	var natural_at: int = int(crop.get("natural_ready_at",0))
+	var natural_ready: bool = not crop.is_empty() and now >= natural_at
+	var cross_ready: bool = not batch.is_empty() and now >= int(batch.get("ready_at",0))
+	return {"natural_ready":natural_ready,"natural_ready_at":natural_at,"pollination":batch.duplicate(true),
+		"cross_ready":cross_ready,"ready_count":int(natural_ready)+int(cross_ready),"mature":bool(plant.get("mature",false))}
+
+func fruit_overview() -> Dictionary:
+	var result := {"ready":0,"growing":0,"fruits":fruit_inventory.size(),"seeds":seed_bank.size(),"next_ready_at":0}
+	var now: int = int(Time.get_unix_time_from_system())
+	for id: String in plant_order:
+		var status: Dictionary = fruit_status(id)
+		result.ready += int(status.ready_count)
+		var times: Array = []
+		if fruit_crops.has(id): times.append(int(status.natural_ready_at))
+		if not status.pollination.is_empty(): times.append(int(status.pollination.ready_at))
+		for at: int in times:
+			if at > now:
+				result.growing += 1
+				if result.next_ready_at == 0 or at < int(result.next_ready_at): result.next_ready_at = at
+	return result
+
+func _next_fruit_id() -> String:
+	reproduction_counter += 1
+	return "fruit_%08d" % reproduction_counter
+
+func _genome_seed(embryo: Dictionary,kind: String,parent_names: Array) -> Dictionary:
+	var genome: Dictionary = embryo.duplicate(true)
+	# The canonical archive already retains every ancestor. Nested pedigrees would
+	# make a seed grow exponentially with each later-generation cross.
+	genome.erase("pedigree")
+	genome["mature"] = false
+	genome["ready_at"] = 0
+	var snapshot: Dictionary = {"id":str(genome.id),"kind":kind,"genome":genome,"species":genome.species,"type":genome.type,
+		"name":genome.name+" seed","seed":genome.seed,"rarity":genome.rarity,
+		"pattern":genome.genes.pattern.dominant,"parents":genome.parents.duplicate(),
+		"parent_names":parent_names.duplicate(),"generation":genome.generation,
+		"lineage_mix":genome.lineage_mix.duplicate(),"lineage_name":genome.get("lineage_name",genome.species)}
+	# JSON is the persisted genome representation. Canonicalize at fertilization,
+	# so numeric allele types do not change when a fruit/seed is later reloaded.
+	return JSON.parse_string(JSON.stringify(snapshot))
+
+func pollinate(id_a: String,id_b: String) -> Dictionary:
+	var a: Dictionary = get_plant(id_a)
+	var b: Dictionary = get_plant(id_b)
+	if a.is_empty() or b.is_empty(): return _failure("Choose two mature parents.")
+	if id_a == id_b: return _failure("Choose two different plants to crossbreed.")
+	if not bool(a.mature) or not bool(b.mature): return _failure("Both parents must finish growing first.")
+	if bool(a.get("withered",false)) or bool(b.get("withered",false)): return _failure("Withered plants remain in the lineage archive. Grow their seeds to continue breeding.")
+	if pollinations.has(id_a):
+		return _failure("Harvest this mother's hybrid fruit before starting another cross." if int(pollinations[id_a].ready_at) <= int(Time.get_unix_time_from_system()) else "This mother is already growing a hybrid fruit. Choose another mother or wait for harvest.")
+	if int(resources.sunlight) < POLLINATION_COST: return _failure("Pollination needs 10 gathered light. Harvesting fruit replenishes it.")
+	var id: String = _next_fruit_id()
+	var embryos: Array = []
+	for index in range(2):
+		var embryo: Dictionary = _make_offspring(a,b,maxi(1,random.randi()),"%s_seed_%d" % [id,index+1])
+		embryos.append(_genome_seed(embryo,"hybrid",[a.name,b.name]))
+	var now: int = int(Time.get_unix_time_from_system())
+	var batch: Dictionary = {"id":id,"kind":"hybrid","mother_id":id_a,"father_id":id_b,
+		"parent_names":[a.name,b.name],"seeds":embryos,"started_at":now,"ready_at":now+FRUIT_GROW_SECONDS,
+		"generation":maxi(int(a.generation),int(b.generation))+1,"lineage_mix":_combined_lineage(a,b)}
+	batch = JSON.parse_string(JSON.stringify(batch))
+	pollinations[id_a] = batch
+	resources.sunlight -= POLLINATION_COST
+	save_game()
+	return {"ok":true,"fruit_id":id,"batch":batch.duplicate(true),"ready_at":batch.ready_at,
+		"message":"Pollination recorded. A hybrid fruit will ripen in 18 seconds, holding two seeds. Both parents remain."}
+
+func _harvest_fruit(plant_id: String,save_after: bool) -> Dictionary:
+	if not plants.has(plant_id): return _failure("Choose a plant to harvest.")
+	var parent: Dictionary = plants[plant_id]
+	var status: Dictionary = fruit_status(plant_id)
+	var harvested: Array = []
+	var light: int = 0
+	var now: int = int(Time.get_unix_time_from_system())
+	if status.cross_ready:
+		var fruit: Dictionary = pollinations[plant_id].duplicate(true)
+		fruit["harvested_at"] = now
+		harvested.append(JSON.parse_string(JSON.stringify(fruit)))
+		pollinations.erase(plant_id)
+		light += 30
+	if status.natural_ready:
+		var id: String = _next_fruit_id()
+		var embryo: Dictionary = _make_offspring(parent,parent,maxi(1,random.randi()),id+"_seed_1")
+		embryo.parents = [parent.id]
+		var seed_data: Dictionary = _genome_seed(embryo,"lineage",[parent.name])
+		var fruit: Dictionary = {"id":id,"kind":"natural","mother_id":plant_id,"father_id":"","parent_names":[parent.name],
+			"seeds":[seed_data],"harvested_at":now,"generation":embryo.generation,"lineage_mix":embryo.lineage_mix.duplicate()}
+		harvested.append(JSON.parse_string(JSON.stringify(fruit)))
+		if bool(parent.get("withered",false)): fruit_crops.erase(plant_id)
+		else: fruit_crops[plant_id].natural_ready_at = now+NATURAL_FRUIT_SECONDS
+		light += 10
+	if harvested.is_empty(): return _failure("Fruit is still growing. Harvest it when it is ripe.")
+	fruit_inventory.append_array(harvested)
+	resources.sunlight += light
+	if save_after: save_game()
+	return {"ok":true,"fruits":harvested.duplicate(true),"sunlight":light,
+		"message":"Harvested %d fruit. Open the fruit to collect its seeds. +%d gathered light." % [harvested.size(),light]}
+
+func harvest_fruit(plant_id: String) -> Dictionary:
+	return _harvest_fruit(plant_id,true)
+
+func harvest_all_fruit() -> Dictionary:
+	var harvested: Array = []
+	var light: int = 0
+	for id: String in plant_order:
+		if int(fruit_status(id).ready_count) == 0: continue
+		var result: Dictionary = _harvest_fruit(id,false)
+		if result.ok:
+			harvested.append_array(result.fruits)
+			light += int(result.sunlight)
+	if harvested.is_empty(): return _failure("Fruit is still growing. Harvest it when it is ripe.")
+	save_game()
+	return {"ok":true,"fruits":harvested,"sunlight":light,
+		"message":"Harvested %d fruit. Open the fruit to collect its seeds. +%d gathered light." % [harvested.size(),light]}
+
+func _extract_seeds(fruit_id: String,save_after: bool) -> Dictionary:
+	for index in range(fruit_inventory.size()):
+		var fruit: Dictionary = fruit_inventory[index]
+		if str(fruit.id) != fruit_id: continue
+		var seeds: Array = fruit.seeds.duplicate(true)
+		seed_bank.append_array(seeds)
+		fruit_inventory.remove_at(index)
+		last_seed_collection = int(Time.get_unix_time_from_system())
+		if save_after: save_game()
+		return {"ok":true,"seeds":seeds,"message":"Collected %d seeds. Their full genomes and parentage are preserved for planting." % seeds.size()}
+	return _failure("This fruit has already been opened or is no longer in storage.")
+
+func extract_seeds(fruit_id: String) -> Dictionary:
+	return _extract_seeds(fruit_id,true)
+
+func extract_all_seeds() -> Dictionary:
+	if fruit_inventory.is_empty(): return _failure("Harvest a ripe fruit before collecting its seeds.")
+	var seeds: Array = []
+	var ids: Array[String] = []
+	for fruit: Dictionary in fruit_inventory: ids.append(str(fruit.id))
+	for id: String in ids:
+		var result: Dictionary = _extract_seeds(id,false)
+		if result.ok: seeds.append_array(result.seeds)
+	save_game()
+	return {"ok":true,"seeds":seeds,"message":"Collected %d seeds. Their full genomes and parentage are preserved for planting." % seeds.size()}
 
 func graft(host_id: String, donor_id: String, trait_name: String = "feature") -> Dictionary:
 	var host: Dictionary = get_plant(host_id)
@@ -223,6 +592,7 @@ func graft(host_id: String, donor_id: String, trait_name: String = "feature") ->
 		return _failure("Choose a host and a different donor.")
 	if not host.mature or not donor.mature:
 		return _failure("The host and donor must both be mature.")
+	if bool(host.get("withered",false)) or bool(donor.get("withered",false)): return _failure("Withered plants cannot supply or receive a graft. Their stored seeds can continue the lineage.")
 	if host.graft_history.size() >= 2:
 		return _failure("This host already carries its two possible grafts.")
 	if donor.favorite:
@@ -242,7 +612,10 @@ func graft(host_id: String, donor_id: String, trait_name: String = "feature") ->
 	elif trait_name in ["stat", "stat bias"]:
 		trait_name = "stat"
 		value = _strongest_stat(donor.stats)
-	var record: Dictionary = {"donor": donor_id, "donor_name": donor.name, "donor_color": donor.genes.color.dominant, "trait": trait_name, "value": value, "generation": host.generation, "success": success, "at": int(Time.get_unix_time_from_system())}
+	var record: Dictionary = {"donor": donor_id, "donor_name": donor.name, "donor_color": donor.genes.color.dominant,
+		"donor_type": donor.type, "donor_species": donor.species, "donor_genes": donor.genes.duplicate(true),
+		"donor_seed": donor.seed, "donor_lineage_mix": lineage_composition(donor),
+		"trait": trait_name, "value": value, "generation": host.generation, "success": success, "at": int(Time.get_unix_time_from_system())}
 	if success:
 		host.graft_history.append(record)
 		if trait_name == "skill":
@@ -274,6 +647,7 @@ func mutate(id: String, agent: String = "radiation", slot: String = "pattern") -
 	var p: Dictionary = get_plant(id)
 	if p.is_empty():
 		return _failure("Choose a plant to expose.")
+	if bool(p.get("withered",false)): return _failure("A withered plant cannot be mutated. Plant its seeds to continue the lineage.")
 	if int(resources.agents) <= 0:
 		return _failure("Mutation needs one agent. Display milestones and battles can award more.")
 	_record_collection(p)
@@ -284,6 +658,7 @@ func mutate(id: String, agent: String = "radiation", slot: String = "pattern") -
 	var old_value: Variant = ""
 	var new_value: Variant = ""
 	var actual_slot: String = slot
+	var previous_genes: Dictionary = p.genes.duplicate(true)
 	if roll < 0.7:
 		outcome = "New trait"
 		if agent.to_lower() == "radiation" and random.randf() < 0.08:
@@ -320,6 +695,14 @@ func mutate(id: String, agent: String = "radiation", slot: String = "pattern") -
 		new_value = p.stats[actual_slot]
 		p.deformed = true
 		message = "Asymmetric growth. %s fell by 20%%; its unusual genes still have breeding value." % actual_slot
+	if outcome=="New trait":
+		if not p.has("gene_sources"): p["gene_sources"] = {}
+		for changed_slot: String in p.genes:
+			if p.genes[changed_slot] == previous_genes.get(changed_slot,{}): continue
+			p.gene_sources[changed_slot] = {"allele_a":{"parent_id":"","parent_name":"","organism_id":p.id,"allele":"mutation","value":p.genes[changed_slot].dominant},
+				"allele_b":{"parent_id":"","parent_name":"","organism_id":p.id,"allele":"prior","value":p.genes[changed_slot].recessive},
+				"expressed_origin":"mutation","expressed":p.genes[changed_slot].dominant,"carried":p.genes[changed_slot].recessive,
+				"mutation_index":p.mutation_history.size(),"before":previous_genes.get(changed_slot,{}).duplicate(true)}
 	p.seed = int(p.seed) # Stored anatomy seed is stable: a new allele changes only its own visual.
 	p.mutation_history.append({"agent": agent, "outcome": outcome, "slot": actual_slot, "before": old_value, "after": new_value, "generation": p.generation, "at": int(Time.get_unix_time_from_system())})
 	p.rarity = _calculate_rarity(p)
@@ -348,22 +731,42 @@ func plant_seed(index: int) -> Dictionary:
 	if int(resources.sunlight) < 10:
 		return _failure("Planting a seed needs 10 gathered light.")
 	var snapshot: Dictionary = seed_bank[index]
-	var p: Dictionary = _create_base(int(snapshot.get("species_index", 0)), int(snapshot.get("seed", random.randi())))
-	p.rarity = str(snapshot.get("rarity", "Common"))
-	if snapshot.has("pattern"):
-		p.genes.pattern.recessive = snapshot.pattern
-		if random.randf() < 0.65:
-			p.genes.pattern.dominant = snapshot.pattern
-	if snapshot.has("parents"):
-		p.parents = snapshot.parents.duplicate()
-		var parent_generation: int = 0
-		for parent_id: String in p.parents:
-			if plants.has(parent_id):
-				parent_generation = maxi(parent_generation, int(plants[parent_id].generation))
-		p.generation = parent_generation + 1
-	p.name = _offspring_name(random)
+	var p: Dictionary
+	if snapshot.has("genome"):
+		if not _valid_genome(snapshot.genome,plants): return _failure("This seed's genome is incomplete. Its parentage has been kept in the archive.")
+		p = snapshot.genome.duplicate(true)
+		p.id = _new_id()
+		p["life_age"] = 0.0
+		p["withered"] = false
+		p["retired"] = false
+		p["origin"] = {"kind":"seed","seed_id":snapshot.get("id",""),"fruit_kind":snapshot.get("kind","lineage")}
+	else:
+		# Earlier archives and external rewards carry tendencies rather than a
+		# fertilized embryo. They remain plantable alongside full hybrid genomes.
+		var archived_parents: Array = []
+		for parent_id: Variant in snapshot.get("parents",[]):
+			if parent_id is String and plants.has(parent_id): archived_parents.append(plants[parent_id])
+		var anatomy_seed: int = int(snapshot.get("seed",random.randi()))
+		if archived_parents.is_empty():
+			p = _create_base(int(snapshot.get("species_index",0)),anatomy_seed)
+		else:
+			p = _make_offspring(archived_parents[0],archived_parents[1] if archived_parents.size()>1 else archived_parents[0],anatomy_seed)
+		p.rarity = str(snapshot.get("rarity", "Common"))
+		if snapshot.has("pattern"):
+			p.genes.pattern.recessive = snapshot.pattern
+			if random.randf() < 0.65: p.genes.pattern.dominant = snapshot.pattern
+		if snapshot.has("parents"):
+			p.parents = snapshot.parents.duplicate()
+			var parent_generation: int = 0
+			for parent_id: String in p.parents:
+				if plants.has(parent_id): parent_generation = maxi(parent_generation, int(plants[parent_id].generation))
+			p.generation = parent_generation+1
+		p.name = _offspring_name(random)
 	p.mature = false
-	p.ready_at = int(Time.get_unix_time_from_system()) + 12
+	p["care"] = Care.default_care()
+	Care.initialize(p)
+	p.ready_at = int(Time.get_unix_time_from_system())+GROW_SECONDS
+	p.born_at = int(Time.get_unix_time_from_system())
 	resources.sunlight -= 10
 	seed_bank.remove_at(index)
 	_add_plant(p)
@@ -590,6 +993,7 @@ func tick_growth() -> bool:
 		var p: Dictionary = plants[id]
 		if not p.mature and now >= int(p.ready_at):
 			p.mature = true
+			_ensure_natural_crop(id,now)
 			changed = true
 	if changed:
 		save_game()
@@ -599,6 +1003,7 @@ func mature_plant(id: String) -> Dictionary:
 	var p: Dictionary = get_plant(id)
 	if p.is_empty():
 		return _failure("Choose a growing plant.")
+	if bool(p.get("withered",false)): return _failure("A withered plant cannot be restored by quick growth. Plant its seeds instead.")
 	if p.mature:
 		return _failure("This plant is already mature.")
 	if int(resources.sunlight) < 5:
@@ -606,13 +1011,14 @@ func mature_plant(id: String) -> Dictionary:
 	resources.sunlight -= 5
 	p.mature = true
 	p.ready_at = int(Time.get_unix_time_from_system())
+	_ensure_natural_crop(id,int(p.ready_at))
 	save_game()
 	return {"ok": true, "message": "%s has unfurled." % p.name, "plant": p}
 
 func place_in_bed(id: String, index: int) -> bool:
 	if index < 0 or index >= 9 or not plants.has(id):
 		return false
-	if not bool(plants[id].mature):
+	if not bool(plants[id].mature) or bool(plants[id].get("withered",false)):
 		return false
 	var old_index: int = bed.find(id)
 	var displaced: String = str(bed[index])
@@ -623,7 +1029,7 @@ func place_in_bed(id: String, index: int) -> bool:
 	return true
 
 func place_in_display(id: String, index: int) -> bool:
-	if index < 0 or index >= 6 or not plants.has(id) or not plants[id].mature:
+	if index < 0 or index >= 6 or not plants.has(id) or not plants[id].mature or bool(plants[id].get("withered",false)):
 		return false
 	var old_index: int = display_bed.find(id)
 	var displaced: String = str(display_bed[index])
@@ -662,14 +1068,16 @@ func collect_mature_seeds() -> Dictionary:
 		return _failure("Seed husks are still forming. Mature plants yield a seed every 3 minutes.")
 	var candidates: Array = []
 	for id: String in plant_order:
-		if plants[id].mature:
+		if plants[id].mature and not bool(plants[id].get("withered",false)):
 			candidates.append(id)
 	if candidates.is_empty():
 		return _failure("A mature plant is needed to gather a seed.")
 	var parent: Dictionary = plants[candidates[random.randi_range(0, candidates.size() - 1)]]
-	var snapshot: Dictionary = _make_seed(_species_index(parent.species), parent.rarity)
-	snapshot.parents = [parent.id]
-	snapshot.pattern = parent.genes.pattern.dominant
+	# Compatibility API for old integrations. New gameplay harvests real fruits;
+	# this older timed collection must also preserve a hybrid's entire genome.
+	var embryo: Dictionary = _make_offspring(parent,parent,maxi(1,random.randi()),_next_fruit_id()+"_seed_1")
+	embryo.parents = [parent.id]
+	var snapshot: Dictionary = _genome_seed(embryo,"lineage",[parent.name])
 	seed_bank.append(snapshot)
 	last_seed_collection = now
 	save_game()
@@ -746,7 +1154,7 @@ func _failure(message: String) -> Dictionary:
 func _default_expedition() -> Dictionary:
 	return {"map_seed": 813931, "position": [15, 18], "steps": 0,
 		"encounters": 0, "captures": 0, "discovered_biomes": ["Mosswood"],
-		"collected_sites": [], "active_encounter": {}, "site_records": {},
+		"collected_sites": [], "active_encounter": {}, "site_records": {}, "visited_landmarks": [],
 		"respawn_day": int(Time.get_unix_time_from_system()) / 86400}
 
 func _normalise_expedition(value: Variant) -> Dictionary:
@@ -754,7 +1162,7 @@ func _normalise_expedition(value: Variant) -> Dictionary:
 	if value is Dictionary:
 		for key: String in result:
 			if value.has(key): result[key] = value[key]
-	result.position = [clampi(int(result.position[0]), 0, 39), clampi(int(result.position[1]), 0, 31)]
+	result.position = [clampi(int(result.position[0]), 0, WORLD_WIDTH-1), clampi(int(result.position[1]), 0, WORLD_HEIGHT-1)]
 	return result
 
 func _valid_expedition(value: Variant) -> bool:
@@ -766,7 +1174,7 @@ func _valid_expedition(value: Variant) -> bool:
 			if not (coordinate is float or coordinate is int): return false
 	for key: String in ["steps", "encounters", "captures", "map_seed", "respawn_day"]:
 		if data.has(key) and not (data[key] is float or data[key] is int): return false
-	for key: String in ["discovered_biomes", "collected_sites"]:
+	for key: String in ["discovered_biomes", "collected_sites", "visited_landmarks"]:
 		if data.has(key) and not data[key] is Array: return false
 	for key: String in ["active_encounter", "site_records"]:
 		if data.has(key) and not data[key] is Dictionary: return false
@@ -800,25 +1208,43 @@ func begin_expedition() -> Dictionary:
 func move_explorer(x: int, y: int) -> void:
 	if expedition.is_empty(): expedition = _default_expedition()
 	if not expedition.active_encounter.is_empty(): return
-	var next: Array = [clampi(x, 0, 39), clampi(y, 0, 31)]
+	var next: Array = [clampi(x, 0, WORLD_WIDTH-1), clampi(y, 0, WORLD_HEIGHT-1)]
 	if next == expedition.position: return
 	# Navigation owns collision and paths; the model counts tiles actually traversed.
 	expedition.steps += absi(int(next[0]) - int(expedition.position[0])) + absi(int(next[1]) - int(expedition.position[1]))
 	expedition.position = next
 	save_game()
 
-func wild_encounter(biome: String = "Mosswood", site_id: String = "") -> Dictionary:
-	begin_expedition()
-	if not WILD_BIOMES.has(biome): return _failure("This habitat has not been mapped.")
-	if site_id.is_empty(): site_id = "%s_%d_%d" % [biome, expedition.position[0], expedition.position[1]]
-	if not expedition.active_encounter.is_empty():
-		if str(expedition.active_encounter.site_id) != site_id:
-			return _failure("Finish observing this organism before moving to another patch.")
-		return _encounter_result("The same wild specimen is still here.")
-	if expedition.collected_sites.has(site_id): return _failure("This patch is resting. New wild growth returns next field day.")
-	var record: Dictionary = expedition.site_records.get(site_id, {"attempts": 0, "observed": false, "fled": false})
-	if bool(record.get("fled", false)): return _failure("The plant withdrew into its roots. This patch will regrow next field day.")
-	var organism_seed: int = maxi(1, absi(("%d/%s/%d" % [expedition.map_seed, site_id, expedition.respawn_day]).hash()))
+func register_biome(biome: String) -> void:
+	if not WILD_BIOMES.has(biome): return
+	if expedition.is_empty(): expedition = _default_expedition()
+	if not expedition.discovered_biomes.has(biome):
+		expedition.discovered_biomes.append(biome)
+		save_game()
+
+func visit_landmark(id: String, biome: String = "Mosswood") -> void:
+	if id.is_empty(): return
+	if expedition.is_empty(): expedition = _default_expedition()
+	if not expedition.has("visited_landmarks"): expedition.visited_landmarks = []
+	var changed: bool = false
+	if not expedition.visited_landmarks.has(id):
+		expedition.visited_landmarks.append(id)
+		changed = true
+	if WILD_BIOMES.has(biome) and not expedition.discovered_biomes.has(biome):
+		expedition.discovered_biomes.append(biome)
+		changed = true
+	if changed: save_game()
+
+func preview_wild_plant(biome: String = "Mosswood", site_id: String = "") -> Dictionary:
+	# Rendering can inspect an organism without opening an encounter, saving,
+	# consuming a persistent ID, or advancing any gameplay random generator.
+	if not WILD_BIOMES.has(biome): return {}
+	var preview_expedition: Dictionary = expedition if not expedition.is_empty() else _default_expedition()
+	if site_id.is_empty(): site_id = "%s_%d_%d" % [biome, preview_expedition.position[0], preview_expedition.position[1]]
+	var active: Dictionary = preview_expedition.get("active_encounter",{})
+	if not active.is_empty() and str(active.get("site_id","")) == site_id:
+		return active.plant.duplicate(true)
+	var organism_seed: int = maxi(1, absi(("%d/%s/%d" % [preview_expedition.map_seed, site_id, preview_expedition.respawn_day]).hash()))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = organism_seed
 	var pool: Array = WILD_BIOMES[biome]
@@ -836,7 +1262,7 @@ func wild_encounter(biome: String = "Mosswood", site_id: String = "") -> Diction
 			p.genes.pattern.dominant = "Starburst" if rng.randf() < 0.5 else "Bicolor Ring"
 		if rng.randf() < 0.20: p.genes.color.dominant = COLORS[rng.randi_range(0, COLORS.size() - 1)]
 		# Deep-field traps remain rare: 4% after ten successful collections.
-		if biome == "Sunken Glade" and int(expedition.captures) >= 10 and rng.randf() < 0.04:
+		if biome in ["Sunken Glade","Ancient Grove","Moonfen"] and int(preview_expedition.captures) >= 10 and rng.randf() < 0.04:
 			p.type = "Carnivorous"
 			p.species = "Hollow Pitcher"
 			p.secondary_type = "Parasite"
@@ -847,6 +1273,21 @@ func wild_encounter(biome: String = "Mosswood", site_id: String = "") -> Diction
 			p.genes.glow.dominant = "Pulsing core"
 	p.rarity = _calculate_rarity(p)
 	p["origin"] = {"kind": "wild", "biome": biome, "site": site_id, "found_at": int(Time.get_unix_time_from_system())}
+	return p
+
+func wild_encounter(biome: String = "Mosswood", site_id: String = "") -> Dictionary:
+	begin_expedition()
+	if not WILD_BIOMES.has(biome): return _failure("This habitat has not been mapped.")
+	if site_id.is_empty(): site_id = "%s_%d_%d" % [biome, expedition.position[0], expedition.position[1]]
+	if not expedition.active_encounter.is_empty():
+		if str(expedition.active_encounter.site_id) != site_id:
+			return _failure("Finish observing this organism before moving to another patch.")
+		return _encounter_result("The same wild specimen is still here.")
+	if expedition.collected_sites.has(site_id): return _failure("This patch is resting. New wild growth returns next field day.")
+	var record: Dictionary = expedition.site_records.get(site_id, {"attempts": 0, "observed": false, "fled": false})
+	if bool(record.get("fled", false)): return _failure("The plant withdrew into its roots. This patch will regrow next field day.")
+	var p: Dictionary = preview_wild_plant(biome,site_id)
+	var organism_seed: int = int(p.seed)
 	var observed: bool = bool(record.get("observed", false))
 	var chance: float = minf(0.98, float(WILD_CATCH_CHANCES.get(p.rarity, 0.90)) + (0.15 if observed else 0.0))
 	expedition.active_encounter = {"plant": p, "biome": biome, "site_id": site_id,
@@ -874,7 +1315,7 @@ func capture_odds(method: String = "gather") -> float:
 func _has_mature_vine() -> bool:
 	for id: String in plant_order:
 		var p: Dictionary = plants[id]
-		if bool(p.mature) and (p.type == "Vine" or p.secondary_type == "Vine"): return true
+		if bool(p.mature) and not bool(p.get("withered",false)) and (p.type == "Vine" or p.secondary_type == "Vine"): return true
 	return false
 
 func resolve_wild_capture(method: String = "gather") -> Dictionary:
@@ -945,6 +1386,7 @@ func field_status() -> Dictionary:
 	return {"kits": field_kits, "field_kits": field_kits, "steps": expedition.steps,
 		"encounters": expedition.encounters, "captures": expedition.captures,
 		"discovered_biomes": expedition.discovered_biomes.duplicate(),
+		"visited_landmarks": expedition.get("visited_landmarks",[]).duplicate(),
 		"active_encounter": expedition.active_encounter, "chance": capture_odds(),
 		"can_entangle": _has_mature_vine()}
 
@@ -953,6 +1395,7 @@ func save_game() -> void:
 		"version": SAVE_VERSION, "plants": plants, "bed": bed,
 		"display_bed": display_bed, "resources": resources,
 		"seed_bank": seed_bank, "wins": wins, "battles": battles,
+		"fruit_inventory":fruit_inventory,"fruit_crops":fruit_crops,"pollinations":pollinations,"reproduction_counter":reproduction_counter,
 		"discovered": discovered, "claimed": claimed, "plant_order": plant_order,
 		"collection_claimed": collection_claimed, "collection_seen": collection_seen,
 		"field_kits": field_kits, "expedition": expedition,
@@ -997,6 +1440,26 @@ func load_game() -> bool:
 	last_daily = int(payload.get("last_daily", 0))
 	last_seed_collection = int(payload.get("last_seed_collection", 0))
 	id_counter = int(payload.get("id_counter", plants.size()))
+	fruit_inventory = payload.get("fruit_inventory",[])
+	fruit_crops = payload.get("fruit_crops",{})
+	pollinations = payload.get("pollinations",{})
+	reproduction_counter = maxi(0,int(payload.get("reproduction_counter",0)))
+	for fruit: Dictionary in fruit_inventory: _recover_fruit_counter(str(fruit.id))
+	for batch: Dictionary in pollinations.values(): _recover_fruit_counter(str(batch.id))
+	for seed_data: Dictionary in seed_bank: _recover_fruit_counter(str(seed_data.get("id","")))
+	_ready_reproduction.clear()
+	# Optional fields migrate the original V1 archive in place. Reconstruct old
+	# mixed ancestry from actual parents instead of guessing from dominant type.
+	var memo: Dictionary = {}
+	for id: String in plant_order:
+		Care.initialize(plants[id])
+		plants[id]["life_age"] = maxf(0.0,float(plants[id].get("life_age",0.0)))
+		plants[id]["withered"] = bool(plants[id].get("withered",false))
+		var composition: Dictionary = _lineage_composition(plants[id],memo,{})
+		plants[id]["lineage_mix"] = composition
+		plants[id]["hybrid"] = composition.size()>1
+		if not plants[id].has("lineage_name"): plants[id]["lineage_name"] = " × ".join(composition.keys())
+		_ensure_natural_crop(id)
 	collection_progress()
 	tick_growth()
 	return true
@@ -1070,9 +1533,111 @@ func _valid_save(value: Variant) -> bool:
 		for stat: String in STAT_NAMES:
 			if not p.stats.has(stat) or not (p.stats[stat] is int or p.stats[stat] is float):
 				return false
+		if p.has("lineage_mix") and not _valid_lineage_mix(p.lineage_mix): return false
+		if p.has("inherited_graft_records") and (not p.inherited_graft_records is Array or p.inherited_graft_records.size()>2): return false
+		if p.has("life_age") and (not _number(p.life_age) or float(p.life_age)<0): return false
+		if p.has("withered") and not p.withered is bool: return false
+		if p.has("measurements") and not Care.valid_measurements(p.measurements): return false
+		if p.has("care") and not Care.valid_care(p.care): return false
+		if p.has("gene_sources") and not _valid_gene_sources(p.gene_sources): return false
+	for seed_data: Variant in data.seed_bank:
+		if not seed_data is Dictionary: return false
+		if seed_data.has("genome") and not _valid_genome(seed_data.genome,data.plants): return false
+	if data.has("reproduction_counter") and (not _number(data.reproduction_counter) or float(data.reproduction_counter)<0): return false
+	if data.has("fruit_crops"):
+		if not data.fruit_crops is Dictionary: return false
+		for id: Variant in data.fruit_crops:
+			var crop: Variant = data.fruit_crops[id]
+			if not id is String or not data.plants.has(id) or not crop is Dictionary or not _number(crop.get("natural_ready_at",null)): return false
+	var fruit_ids: Dictionary = {}
+	if data.has("pollinations"):
+		if not data.pollinations is Dictionary: return false
+		for id: Variant in data.pollinations:
+			var batch: Variant = data.pollinations[id]
+			if not id is String or not data.plants.has(id) or not _valid_fruit(batch,data.plants): return false
+			if str(batch.mother_id)!=id or batch.kind!="hybrid" or not _number(batch.get("ready_at",null)): return false
+			if fruit_ids.has(batch.id): return false
+			fruit_ids[batch.id] = true
+	if data.has("fruit_inventory"):
+		if not data.fruit_inventory is Array: return false
+		for fruit: Variant in data.fruit_inventory:
+			if not _valid_fruit(fruit,data.plants) or not _number(fruit.get("harvested_at",null)): return false
+			if fruit_ids.has(fruit.id): return false
+			fruit_ids[fruit.id] = true
 	for entry: Variant in data.bed + data.display_bed:
 		if not entry is String:
 			return false
 		if not entry.is_empty() and not data.plants.has(entry):
 			return false
+	return true
+
+func _number(value: Variant) -> bool:
+	return (value is int or value is float) and is_finite(float(value))
+
+func _recover_fruit_counter(id: String) -> void:
+	if not id.begins_with("fruit_"): return
+	var digits: String = id.trim_prefix("fruit_").get_slice("_",0)
+	if digits.is_valid_int(): reproduction_counter = maxi(reproduction_counter,int(digits))
+
+func _valid_lineage_mix(value: Variant) -> bool:
+	if not value is Dictionary or value.is_empty(): return false
+	var total: float = 0.0
+	for key: Variant in value:
+		if not key is String or key not in TYPES or not _number(value[key]) or float(value[key])<=0: return false
+		total += float(value[key])
+	return total>0.0 and is_finite(total)
+
+func _valid_genome(value: Variant,archive: Dictionary) -> bool:
+	if not value is Dictionary: return false
+	for key: String in ["id","name","species","type","rarity"]:
+		if not value.get(key,null) is String or str(value[key]).is_empty(): return false
+	if str(value.type) not in TYPES or not _number(value.get("seed",null)) or not _number(value.get("generation",null)) or int(value.generation)<1: return false
+	if not value.get("parents",null) is Array or not value.get("genes",null) is Dictionary or not value.get("stats",null) is Dictionary: return false
+	for parent: Variant in value.parents:
+		if not parent is String or not archive.has(parent): return false
+	for slot: String in ["color","accent","pattern","petals","shape","form","texture","glow","size"]:
+		var gene: Variant = value.genes.get(slot,null)
+		if not gene is Dictionary or not gene.has("dominant") or not gene.has("recessive"): return false
+	for stat: String in STAT_NAMES:
+		if not _number(value.stats.get(stat,null)) or float(value.stats[stat])<1: return false
+	if not value.get("skills",null) is Array or value.skills.is_empty(): return false
+	for skill: Variant in value.skills:
+		if not skill is String: return false
+	if not value.get("skill_genes",null) is Dictionary or not value.skill_genes.get("dominant",null) is String or not value.skill_genes.get("recessive",null) is String: return false
+	for array_key: String in ["graft_history","mutation_history"]:
+		if not value.get(array_key,null) is Array: return false
+	if not value.get("mature",null) is bool or not value.get("favorite",null) is bool or not _number(value.get("ready_at",null)): return false
+	if not _valid_lineage_mix(value.get("lineage_mix",null)): return false
+	if value.has("inherited_graft_records") and (not value.inherited_graft_records is Array or value.inherited_graft_records.size()>2): return false
+	if value.has("life_age") and (not _number(value.life_age) or float(value.life_age)<0): return false
+	if value.has("withered") and not value.withered is bool: return false
+	if value.has("measurements") and not Care.valid_measurements(value.measurements): return false
+	if value.has("care") and not Care.valid_care(value.care): return false
+	if value.has("gene_sources") and not _valid_gene_sources(value.gene_sources): return false
+	return true
+
+func _valid_gene_sources(value: Variant) -> bool:
+	if not value is Dictionary: return false
+	for slot: Variant in value:
+		var source: Variant = value[slot]
+		if not slot is String or not source is Dictionary: return false
+		if not source.get("expressed_origin",null) is String or not source.has("expressed") or not source.has("carried"): return false
+		for key: String in ["allele_a","allele_b"]:
+			var allele: Variant = source.get(key,null)
+			if not allele is Dictionary or not allele.has("value"): return false
+			for field: String in ["parent_id","parent_name","allele"]:
+				if not allele.get(field,null) is String: return false
+	return true
+
+func _valid_fruit(value: Variant,archive: Dictionary) -> bool:
+	if not value is Dictionary or not value.get("id",null) is String or str(value.id).is_empty(): return false
+	if str(value.get("kind","")) not in ["natural","hybrid"]: return false
+	if not value.get("mother_id",null) is String or not archive.has(value.mother_id): return false
+	if not value.get("father_id",null) is String or (not str(value.father_id).is_empty() and not archive.has(value.father_id)): return false
+	if value.kind=="hybrid" and str(value.father_id).is_empty(): return false
+	if not value.get("parent_names",null) is Array or not _number(value.get("generation",null)): return false
+	if not _valid_lineage_mix(value.get("lineage_mix",null)): return false
+	if not value.get("seeds",null) is Array or value.seeds.size()!=(2 if value.kind=="hybrid" else 1): return false
+	for seed_data: Variant in value.seeds:
+		if not seed_data is Dictionary or not _valid_genome(seed_data.get("genome",null),archive): return false
 	return true

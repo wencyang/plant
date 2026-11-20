@@ -5,9 +5,17 @@ const Cell = preload("res://scripts/plant_cell.gd")
 const Combat = preload("res://scripts/battle_sim.gd")
 const Ecology = preload("res://scripts/ecology.gd")
 const Bench = preload("res://scripts/bench_surface.gd")
-const INK := Color("dce0ce")
-const MUTED := Color("8d9f91")
-const AMBER := Color("d5b67b")
+const Display = preload("res://scripts/display_settings.gd")
+const Locale = preload("res://scripts/localization.gd")
+const Sound = preload("res://scripts/soundscape.gd")
+const DNA = preload("res://scripts/plant_dna.gd")
+const GeneticsUI = preload("res://scripts/genetics_panel.gd")
+const Guide = preload("res://scripts/genetics_guide.gd")
+const CareUI = preload("res://scripts/plant_care_panel.gd")
+const CareSpark = preload("res://scripts/care_tool_icon.gd")
+const INK := Color("284838")
+const MUTED := Color("617957")
+const AMBER := Color("a4542b")
 var state = State.new()
 var sim = null
 var speed: float = 1.0
@@ -47,7 +55,7 @@ var helper_label: Label
 var display_caption: Button
 var display_heading: HBoxContainer
 var title_row: HBoxContainer
-var footer_row: HBoxContainer
+var footer_row: GridContainer
 var toast_label: Label
 var toast_panel: PanelContainer
 var cells: Dictionary = {}
@@ -79,10 +87,38 @@ var explore_button: Button
 var wilderness: Control
 var exploring: bool = false
 var wild_encounter_open: bool = false
+var display_settings = Display.new()
+var display_settings_button: Button
+var display_output_label: Label
+var soundscape: Node
+var language_picker: OptionButton
+var locale_timer: float = 0.0
+var preferences_paused_battle: bool = false
+var last_audio_biome: String = ""
+var breeding_button: Button
+var nursery_button: Button
+var nursery_tab: String = "plants"
+var seed_page: int = 0
+var active_parent_slot: int = 0
+var reproduction_labels: Array[Label] = []
+var reproduction_buttons: Array[Button] = []
+var reproduction_signature: String = ""
+var lifecycle_meters: Array[ProgressBar] = []
+var life_save_timer: float = 0.0
+var care_button: Button
+var care_buttons: Array[Button] = []
+var care_labels: Array[Label] = []
 
 func _ready() -> void:
+	if state.save_path == State.SAVE_PATH and DisplayServer.get_name() != "headless": Locale.load_settings()
+	# Test/preview SceneTrees own their viewport. The actual main scene adapts to
+	# the monitor and renders directly at the larger physical window size.
+	if get_tree().current_scene == self or (state.save_path == State.SAVE_PATH and not OS.get_cmdline_args().has("--script")):
+		display_settings.configure(get_window())
+		if display_settings.enabled: print("DISPLAY INITIALIZED: ",display_settings.description())
 	var title_font := SystemFont.new()
-	title_font.font_names = PackedStringArray(["Menlo","DejaVu Sans Mono","monospace"])
+	title_font.font_names = PackedStringArray(["Avenir Next","Trebuchet MS","Verdana"])
+	title_font.font_weight = 700
 	serif = title_font
 	var body_font := SystemFont.new()
 	body_font.font_names = PackedStringArray(["Helvetica Neue","Arial","DejaVu Sans"])
@@ -92,12 +128,18 @@ func _ready() -> void:
 	_build_theme()
 	if not state.load_game(): state.new_game()
 	state.tick_growth()
+	soundscape = Sound.new()
+	soundscape.preview_muted = state.save_path != State.SAVE_PATH
+	if soundscape.preview_muted: soundscape.settings_path = state.save_path.get_basename()+".audio.cfg"
+	add_child(soundscape)
+	soundscape.set_context("garden")
 	_build_ui()
 	_refresh()
 	resized.connect(_responsive)
 	call_deferred("_responsive")
 	primary_button.grab_focus()
 	get_tree().auto_accept_quit = false
+	call_deferred("_localize_ui")
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
@@ -110,34 +152,44 @@ func _build_theme() -> void:
 	t.default_font_size = 14
 	t.set_color("font_color", "Label", INK)
 	t.set_color("font_color", "Button", INK)
-	t.set_color("font_hover_color", "Button", Color("f0e8cf"))
-	t.set_color("font_disabled_color", "Button", Color("64746a"))
+	t.set_color("font_hover_color", "Button", Color("203d2a"))
+	t.set_color("font_disabled_color", "Button", Color("849279"))
 	for kind in ["Button", "OptionButton"]:
-		t.set_stylebox("normal", kind, _style(Color("23382d"), Color("4b6250"), 5, 14, 10))
-		t.set_stylebox("hover", kind, _style(Color("304737"), Color("809277"), 5, 14, 10))
-		t.set_stylebox("pressed", kind, _style(Color("344c38"), Color("b0ae82"), 5, 14, 10))
-		t.set_stylebox("focus", kind, _style(Color(0,0,0,0), Color("b5c29d"), 5, 14, 10))
-		t.set_stylebox("disabled", kind, _style(Color("18271f"), Color("304237"), 5, 14, 10))
-	t.set_stylebox("normal", "LineEdit", _style(Color("14251f"), Color("52684e"), 5, 12, 10))
+		t.set_color("font_color",kind,INK)
+		t.set_color("font_hover_color",kind,INK)
+		t.set_color("font_focus_color",kind,INK)
+		t.set_color("font_pressed_color",kind,INK)
+		t.set_color("font_hover_pressed_color",kind,INK)
+		t.set_stylebox("normal", kind, _style(Color("e8efb7"), Color("8ca96a"), 5, 14, 10))
+		t.set_stylebox("hover", kind, _style(Color("fff0a7"), Color("c79b50"), 5, 14, 10))
+		t.set_stylebox("pressed", kind, _style(Color("bddd91"), Color("6c9756"), 5, 14, 10))
+		t.set_stylebox("focus", kind, _style(Color.TRANSPARENT, Color("e19354"), 5, 14, 10))
+		t.set_stylebox("disabled", kind, _style(Color("e4e7cf"), Color("b3bca2"), 5, 14, 10))
+	t.set_stylebox("normal", "LineEdit", _style(Color("fffbea"), Color("8aa569"), 5, 12, 10))
 	t.set_color("font_color", "LineEdit", INK)
 	t.set_color("font_color", "PopupMenu", INK)
-	t.set_stylebox("panel", "PopupMenu", _style(Color("1b3026"), Color("6b7e61"), 5, 8, 8))
-	t.set_stylebox("panel", "TooltipPanel", _style(Color("172a22"), Color("697e62"), 4, 12, 10))
+	t.set_stylebox("panel", "PopupMenu", _style(Color("fff9df"), Color("8ca96a"), 5, 8, 8))
+	t.set_color("font_hover_color","PopupMenu",INK)
+	t.set_stylebox("panel", "TooltipPanel", _style(Color("fff5ca"), Color("bd9f63"), 4, 12, 10))
 	t.set_color("font_color", "TooltipLabel", INK)
+	for kind in ["CheckButton","CheckBox"]:
+		for state_name in ["font_color","font_hover_color","font_pressed_color","font_focus_color","font_hover_pressed_color"]: t.set_color(state_name,kind,INK)
 	t.set_constant("separation", "VBoxContainer", 8)
 	t.set_constant("separation", "HBoxContainer", 12)
 	theme = t
 
 func _style(bg: Color, border: Color = Color("344d3c"), radius: int = 5, horizontal: int = 16, vertical: int = 12) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	s.border_color = border
+	# Keep older feature panels in the same sunny paper-and-leaf palette.
+	# Pigment swatches and plant shaders never pass through this UI helper.
+	s.bg_color = Color("fff7da").lerp(Color("e5efc6"),clampf((bg.v-0.08)*3.0,0,1)) if bg.v<0.50 and bg.a>0 else bg
+	s.bg_color.a = bg.a
+	s.border_color = Color("9eb77d") if border.v<0.57 and border.a>0 else border
 	s.set_border_width_all(2)
 	s.set_corner_radius_all(0)
-	s.border_color = border
-	s.shadow_color = Color(0.015,0.035,0.025,0.5)
-	s.shadow_size = 2
-	s.shadow_offset = Vector2(2,2)
+	s.shadow_color = Color(0.30,0.43,0.20,0.18)
+	s.shadow_size = 3
+	s.shadow_offset = Vector2(3,3)
 	s.content_margin_left = horizontal
 	s.content_margin_right = horizontal
 	s.content_margin_top = vertical
@@ -148,7 +200,10 @@ func _label(text: String, font_size: int = 14, color: Color = INK, use_serif: bo
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", font_size)
-	l.add_theme_color_override("font_color", color)
+	var readable: Color = color
+	if color!=INK and color!=MUTED and color!=AMBER and color.v>0.60:
+		readable = Color("8e592d") if color.r>color.g*1.05 else Color("4b6d43")
+	l.add_theme_color_override("font_color", readable)
 	if use_serif: l.add_theme_font_override("font", serif)
 	return l
 
@@ -162,7 +217,7 @@ func _button(text: String, action: Callable, minimum: Vector2 = Vector2.ZERO) ->
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size = minimum
-	b.pressed.connect(action)
+	b.pressed.connect(func(): _play_sound("ui"); action.call())
 	return b
 
 func _spacer(parent: Node, vertical: bool = false) -> Control:
@@ -174,7 +229,7 @@ func _spacer(parent: Node, vertical: bool = false) -> Control:
 
 func _line(parent: Node) -> void:
 	var line := HSeparator.new()
-	line.modulate = Color("546c53")
+	line.modulate = Color("b3c88c")
 	parent.add_child(line)
 
 func _build_ui() -> void:
@@ -192,23 +247,27 @@ func _build_ui() -> void:
 	ui_margin.add_child(root)
 	var top := HBoxContainer.new()
 	root.add_child(top)
-	var brand := _label("H E R B A R I U M", 14, Color("c3cfac"))
+	var brand := _label("SPROUT · GROW · DISCOVER", 13, INK)
 	brand_label = brand
 	brand.tooltip_text = "The Quiet Conservatory · a plant breeding auto-battler"
 	top.add_child(brand)
 	_spacer(top)
 	resources_label = _label("", 14, Color("c4cbb2"))
 	top.add_child(resources_label)
+	display_settings_button = _button("Settings", _open_settings, Vector2(82,26))
+	display_settings_button.add_theme_font_size_override("font_size",12)
+	display_settings_button.add_theme_stylebox_override("normal",_style(Color("1c3128"),Color("4b6250"),0,8,4))
+	top.add_child(display_settings_button)
 	_line(root)
 	title_row = HBoxContainer.new()
 	root.add_child(title_row)
 	var titles := VBoxContainer.new()
 	titles.add_theme_constant_override("separation", 3)
 	title_row.add_child(titles)
-	titles.add_child(_label("FIELD STATION  /  001     ·     DUSK BIOME", 10, Color("8b9f87")))
+	titles.add_child(_label("A LITTLE SUNSHINE. A LOT OF POSSIBILITIES.", 10, MUTED))
 	heading = _label("Quiet Conservatory", 36, INK, true)
 	titles.add_child(heading)
-	helper_label = _label("Your garden is home. A whole wild world is growing beyond it.", 13, MUTED)
+	helper_label = _label("Grow a giant. Find a wild friend. Mix two plants and see what sprouts!", 13, MUTED)
 	titles.add_child(helper_label)
 	_spacer(title_row)
 	var score_box := VBoxContainer.new()
@@ -229,9 +288,9 @@ func _build_ui() -> void:
 	var cap_row := HBoxContainer.new()
 	display_heading = cap_row
 	garden_column.add_child(cap_row)
-	cap_row.add_child(_label("01  /  THE DISPLAY BED", 11, Color("afbd9d")))
+	cap_row.add_child(_label("YOUR SHOW-OFF SHELF", 11, INK))
 	_spacer(cap_row)
-	display_caption = _button("Six specimens. One ecology. · Observe", _open_display_notes)
+	display_caption = _button("Garden stars · Collect rewards", _open_display_notes)
 	display_caption.add_theme_font_size_override("font_size",10)
 	display_caption.add_theme_stylebox_override("normal",_style(Color(0,0,0,0),Color(0,0,0,0),2,4,4))
 	cap_row.add_child(display_caption)
@@ -242,7 +301,7 @@ func _build_ui() -> void:
 	garden_column.add_child(display_grid)
 	var bed_header := HBoxContainer.new()
 	garden_column.add_child(bed_header)
-	bed_header.add_child(_label("02  /  THE ROOTING BED", 11, Color("afbd9d")))
+	bed_header.add_child(_label("THE GROW PATCH", 11, INK))
 	_spacer(bed_header)
 	synergy_label = _label("", 11, MUTED)
 	bed_header.add_child(synergy_label)
@@ -296,9 +355,9 @@ func _build_ui() -> void:
 	tray_panel.add_child(tray_column)
 	var tray_heading := HBoxContainer.new()
 	tray_column.add_child(tray_heading)
-	tray_heading.add_child(_label("YOUR LIVING SPECIMENS", 10, Color("afbd9d")))
+	tray_heading.add_child(_label("YOUR PLANT PALS", 10, INK))
 	_spacer(tray_heading)
-	tray_hint = _label("DRAG TO PLANT  ·  HOLD TO EXAMINE", 10, MUTED)
+	tray_hint = _label("DRAG TO PLANT · TAP TO SAY HELLO", 10, MUTED)
 	tray_heading.add_child(tray_hint)
 	tray_scroll = ScrollContainer.new()
 	tray_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -321,21 +380,30 @@ func _build_ui() -> void:
 	battle_controls.add_child(speed_button)
 	burst_button = _button("Bloom Burst · gathering", _bloom_burst, Vector2(210, 54))
 	battle_controls.add_child(burst_button)
-	footer_row = HBoxContainer.new()
+	footer_row = GridContainer.new()
+	footer_row.columns = 6
 	root.add_child(footer_row)
-	footer_row.add_child(_button("Laboratory", func(): _open_lab(), Vector2(130, 48)))
-	footer_row.add_child(_button("Seed bank", _open_seeds, Vector2(120, 48)))
+	breeding_button = _button("Crossbreeding", func(): lab_mode = "Crossbreed"; _open_lab(), Vector2(205,48))
+	breeding_button.set_meta("reproduction_action","open_breeding")
+	breeding_button.add_theme_stylebox_override("normal",_style(Color("ffb08c"),Color("cf855d"),0,14,14))
+	breeding_button.add_theme_stylebox_override("hover",_style(Color("ffc9a3"),Color("cf855d"),0,14,14))
+	breeding_button.add_theme_color_override("font_color",Color("182c22"))
+	breeding_button.add_theme_color_override("font_hover_color",Color("14281c"))
+	footer_row.add_child(breeding_button)
+	nursery_button = _button("Fruit & seeds",_open_seeds,Vector2(150,48))
+	nursery_button.set_meta("reproduction_action","open_nursery")
+	footer_row.add_child(nursery_button)
+	care_button = _button("Tool shed",func(): _open_care(),Vector2(100,48))
+	care_button.set_meta("reproduction_action","open_care")
+	care_button.add_theme_stylebox_override("normal",_style(Color("ffe58d"),Color("cba355"),0,14,12))
+	footer_row.add_child(care_button)
 	footer_row.add_child(_button("Codex", _open_codex, Vector2(100, 48)))
-	_spacer(footer_row)
 	explore_button = _button("Explore wilds →", _open_wilderness, Vector2(175,48))
 	explore_button.add_theme_color_override("font_color",AMBER)
 	footer_row.add_child(explore_button)
-	primary_button = _button("Let the gardens meet   →", _prepare_battle, Vector2(265, 48))
-	primary_button.add_theme_stylebox_override("normal", _style(Color("a9b68a"), Color("d0d5a9"), 0, 14, 14))
-	primary_button.add_theme_stylebox_override("hover", _style(Color("c3ca9d"), Color("dfe2bb"), 0, 14, 14))
-	primary_button.add_theme_color_override("font_color", Color("182c22"))
-	primary_button.add_theme_color_override("font_hover_color", Color("14281c"))
+	primary_button = _button("Let the gardens meet   →", _prepare_battle, Vector2(180, 48))
 	footer_row.add_child(primary_button)
+	for action in footer_row.get_children(): action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	toast_panel = PanelContainer.new()
 	toast_panel.add_theme_stylebox_override("panel", _style(Color("2c4030"), Color("8d9e6f"), 6, 22, 14))
 	toast_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -347,39 +415,50 @@ func _build_ui() -> void:
 
 func _responsive() -> void:
 	small_layout = size.x < 900
+	var short_window: bool = not small_layout and size.y < 960
+	var very_short: bool = not small_layout and size.y < 850
+	display_settings_button.visible = true
+	display_settings_button.text = "···" if small_layout else "Settings"
+	display_settings_button.custom_minimum_size.x = 32 if small_layout else 82
 	sidebar.visible = not small_layout
-	heading.add_theme_font_size_override("font_size", 24 if small_layout else 34)
-	root_column.add_theme_constant_override("separation", 6 if small_layout else 10)
-	display_grid.custom_minimum_size.y = 72 if small_layout else 108
+	heading.add_theme_font_size_override("font_size", 24 if small_layout or very_short else (30 if short_window else 34))
+	root_column.add_theme_constant_override("separation", 6 if small_layout or very_short else (8 if short_window else 10))
+	display_grid.custom_minimum_size.y = 82 if small_layout else (72 if short_window else 108)
 	display_heading.visible = sim == null
 	brand_label.visible = not small_layout
 	collection_box.visible = not small_layout
 	tray_hint.visible = not small_layout
-	tray_scroll.custom_minimum_size.y = 116 if small_layout else 132
+	tray_scroll.custom_minimum_size.y = 116 if small_layout or short_window else 132
 	battle_controls.columns = 2 if small_layout else 5
 	burst_button.custom_minimum_size.x = 155 if small_layout else 210
-	helper_label.visible = size.x > 700
+	helper_label.visible = size.x > 700 and not very_short
 	display_caption.visible = true
 	if small_layout: display_caption.text = "Beauty %d · Observe" % int(state.display_score().get("total",0))
-	else: display_caption.text = "Six specimens. One ecology. · Observe"
+	else: display_caption.text = "Garden stars · Collect rewards"
 	for edge in ["left", "right"]: ui_margin.add_theme_constant_override("margin_" + edge, 14 if small_layout else 38)
-	for edge in ["top", "bottom"]: ui_margin.add_theme_constant_override("margin_" + edge, 14 if small_layout else 22)
+	for edge in ["top", "bottom"]: ui_margin.add_theme_constant_override("margin_" + edge, 14 if small_layout or very_short else (16 if short_window else 22))
 	resources_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL if small_layout else Control.SIZE_SHRINK_END
 	resources_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if small_layout else HORIZONTAL_ALIGNMENT_RIGHT
 	resources_label.add_theme_font_size_override("font_size", 11 if small_layout else 14)
 	timer_label.add_theme_font_size_override("font_size", 20 if small_layout else 25)
-	resources_label.text = ("LIGHT %d · SEEDS %d · AGENTS %d · GRAFTS %d" if small_layout else "Gathered light  %d    /    Seeds  %d    /    Agents  %d    /    Graft  %d") % [state.resources.sunlight, state.seed_bank.size(), state.resources.agents, state.resources.grafts]
-	for c in display_grid.get_children(): c.custom_minimum_size = Vector2(0, 72 if small_layout else 108)
-	for c in tray_row.get_children(): c.custom_minimum_size = Vector2(116,110) if small_layout else Vector2(130,128)
+	_refresh_reproduction_counters()
+	for c in display_grid.get_children(): c.custom_minimum_size = Vector2(0,82 if small_layout else (72 if short_window else 108))
+	for c in tray_row.get_children(): c.custom_minimum_size = Vector2(116,110) if small_layout else Vector2(130,110 if short_window else 128)
 	for c in opponent_grid.get_children(): c.custom_minimum_size = Vector2(0,55 if small_layout else 72)
-	for c in bed_grid.get_children(): c.custom_minimum_size = Vector2(0, (55 if small_layout else 72) if sim != null else (72 if small_layout else 110))
+	for c in bed_grid.get_children(): c.custom_minimum_size = Vector2(0, (55 if small_layout else 72) if sim != null else (60 if small_layout else (76 if short_window else 108)))
 	for b in footer_row.get_children():
 		if b is Button:
-			b.custom_minimum_size.x = 0 if small_layout else (265 if b == primary_button else 100)
+			b.custom_minimum_size.x = 0 if small_layout else (160 if b == breeding_button else (130 if b == nursery_button else (150 if b == primary_button else 100)))
 			b.add_theme_font_size_override("font_size", 11 if small_layout else 14)
-	footer_row.add_theme_constant_override("separation",6 if small_layout else 12)
-	footer_row.get_child(0).text = "Lab" if small_layout else "Laboratory"
-	footer_row.get_child(1).text = "Seeds" if small_layout else "Seed bank"
+	footer_row.columns = (5 if sim!=null else 3) if small_layout else 6
+	footer_row.add_theme_constant_override("h_separation",6 if small_layout else 12)
+	footer_row.add_theme_constant_override("v_separation",6)
+	care_button.text = "Tools" if small_layout else "Tool shed"
+	care_button.disabled = sim!=null
+	care_button.visible = sim==null
+	breeding_button.text = "Breed" if small_layout else "Crossbreeding"
+	breeding_button.disabled = sim != null
+	_refresh_reproduction_counters()
 	explore_button.text = "Explore" if small_layout else "Explore wilds →"
 	explore_button.visible = true
 	explore_button.disabled = sim != null
@@ -395,7 +474,7 @@ func _clear(node: Node) -> void:
 		child.queue_free()
 
 func _refresh() -> void:
-	resources_label.text = "Gathered light  %d    /    Seeds  %d    /    Agents  %d    /    Graft  %d" % [state.resources.sunlight, state.seed_bank.size(), state.resources.agents, state.resources.grafts]
+	_refresh_reproduction_counters()
 	var score: Dictionary = state.display_score()
 	score_label.text = "%03d  /  beauty" % int(score.get("total", 0))
 	status_label.text = last_log
@@ -445,6 +524,195 @@ func _refresh_synergies() -> void:
 		if int(counts[type]) >= 3: active.append("%s network" % type)
 	synergy_label.text = " · ".join(active) if not active.is_empty() else "Three of a type intertwine."
 
+func _lineage_text(p: Dictionary) -> String:
+	var mix: Dictionary = state.lineage_composition(p)
+	var ordered: Array = mix.keys()
+	ordered.sort_custom(func(a,b): return float(mix[a])>float(mix[b]))
+	var parts: Array[String] = []
+	for type_name: String in ordered:
+		parts.append("%s %d%%" % [type_name,roundi(float(mix[type_name])*100)])
+	return " · ".join(parts)
+
+func _fruit_note(id: String) -> String:
+	var p: Dictionary = state.get_plant(id)
+	if p.is_empty(): return ""
+	var now: int = int(Time.get_unix_time_from_system())
+	if p.get("withered",false):
+		return "Final fruit ready · harvest to preserve this DNA" if int(state.fruit_status(id).get("ready_count",0))>0 else "Withered · continue this lineage from its stored seeds"
+	if not p.get("mature",false): return "Seedling · mature in %d seconds" % maxi(0,int(p.get("ready_at",now))-now)
+	var status: Dictionary = state.fruit_status(id)
+	if int(status.get("ready_count",0))>0: return "%d ripe fruit ready to harvest" % int(status.ready_count)
+	var cross: Dictionary = status.get("pollination",{})
+	if not cross.is_empty(): return "Hybrid fruit developing · %d seconds" % maxi(0,int(cross.get("ready_at",now))-now)
+	return "Natural fruit developing · %d seconds" % maxi(0,int(status.get("natural_ready_at",now))-now)
+
+func _live_fruit_label(id: String, font_size: int = 12) -> Label:
+	var note: Label = _wrap(_fruit_note(id),font_size,AMBER)
+	note.set_meta("fruit_plant_id",id)
+	reproduction_labels.append(note)
+	return note
+
+func _life_note(id: String) -> String:
+	var life: Dictionary = state.life_profile(id)
+	var remaining: int = maxi(0,int(life.get("remaining",0)))
+	match str(life.get("stage","mature")):
+		"seedling": return "Seedling · growing toward maturity"
+		"aging": return "Aging · %02d:%02d until natural withering" % [remaining/60,remaining%60]
+		"withered": return "Withered · DNA and pedigree remain in the archive"
+		_:
+			remaining = maxi(0,ceili(float(life.get("aging_at",State.AGING_SECONDS))-float(life.get("age",0))))
+			return "Mature · %02d:%02d until aging" % [remaining/60,remaining%60]
+
+func _live_life_label(id: String) -> Label:
+	var note: Label = _wrap(_life_note(id),12,MUTED)
+	note.set_meta("life_plant_id",id)
+	reproduction_labels.append(note)
+	return note
+
+func _life_meter(id: String) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size.y = 5
+	bar.show_percentage = false
+	bar.set_meta("life_plant_id",id)
+	bar.add_theme_stylebox_override("background",_style(Color("24392d"),Color.TRANSPARENT,0,0,0))
+	bar.add_theme_stylebox_override("fill",_style(Color("a3b782"),Color.TRANSPARENT,0,0,0))
+	bar.value = (1.0-float(state.life_profile(id).get("progress",0)))*100
+	lifecycle_meters.append(bar)
+	return bar
+
+func _action_button(text: String, action: Callable, kind: String, plant_id: String = "") -> Button:
+	var button: Button = _button(text,action)
+	button.set_meta("reproduction_action",kind)
+	if not plant_id.is_empty(): button.set_meta("plant_id",plant_id)
+	return button
+
+func _harvest_button(id: String) -> Button:
+	var button: Button = _action_button("Harvest fruit",func(): _harvest_fruit(id),"harvest",id)
+	button.disabled = int(state.fruit_status(id).get("ready_count",0))==0 or sim!=null
+	reproduction_buttons.append(button)
+	return button
+
+func _refresh_reproduction_counters() -> void:
+	var overview: Dictionary = state.fruit_overview()
+	var stored: int = int(overview.get("fruits",0))
+	resources_label.text = ("LIGHT %d · FRUIT %d · SEEDS %d" if small_layout else "Gathered light  %d    /    Fruit  %d    /    Seeds  %d") % [state.resources.sunlight,stored,state.seed_bank.size()]
+	Locale.apply_tree(resources_label)
+	if is_instance_valid(nursery_button):
+		var ready: int = int(overview.get("ready",0))
+		nursery_button.text = ("Harvest %d" if small_layout else "Fruit & seeds · %d ripe") % ready if ready>0 else ("Harvest" if small_layout else "Fruit & seeds")
+		nursery_button.add_theme_color_override("font_color",AMBER if ready>0 else INK)
+		Locale.apply_tree(nursery_button)
+	for index in range(reproduction_labels.size()-1,-1,-1):
+		var note: Label = reproduction_labels[index]
+		if not is_instance_valid(note): reproduction_labels.remove_at(index); continue
+		note.text = _life_note(str(note.get_meta("life_plant_id"))) if note.has_meta("life_plant_id") else _fruit_note(str(note.get_meta("fruit_plant_id","")))
+		Locale.apply_tree(note)
+	for index in range(reproduction_buttons.size()-1,-1,-1):
+		var button: Button = reproduction_buttons[index]
+		if not is_instance_valid(button): reproduction_buttons.remove_at(index); continue
+		var id: String = str(button.get_meta("plant_id",""))
+		match str(button.get_meta("reproduction_action","")):
+			"next_cross": button.disabled = not state.get_plant(id).get("mature",false) or state.get_plant(id).get("withered",false) or sim!=null
+			"dna_use_pair":
+				var mate: Dictionary = state.get_plant(str(button.get_meta("parent_b","")))
+				button.disabled = not state.get_plant(id).get("mature",false) or state.get_plant(id).get("withered",false) or not mate.get("mature",false) or mate.get("withered",false) or sim!=null
+			"harvest_all": button.disabled = int(overview.get("ready",0))==0 or sim!=null
+			"extract_all": button.disabled = state.fruit_inventory.is_empty() or sim!=null
+			_: button.disabled = int(state.fruit_status(id).get("ready_count",0))==0 or sim!=null
+	for index in range(lifecycle_meters.size()-1,-1,-1):
+		var bar: ProgressBar = lifecycle_meters[index]
+		if not is_instance_valid(bar): lifecycle_meters.remove_at(index); continue
+		var life: Dictionary = state.life_profile(str(bar.get_meta("life_plant_id","")))
+		bar.value = (1.0-float(life.get("progress",0)))*100
+	_refresh_care_counters()
+
+func _refresh_care_counters() -> void:
+	for index in range(care_buttons.size()-1,-1,-1):
+		var button: Button = care_buttons[index]
+		if not is_instance_valid(button): care_buttons.remove_at(index); continue
+		var id: String = str(button.get_meta("plant_id",""))
+		var tool_key: String = str(button.get_meta("care_tool",""))
+		var status: Dictionary = state.care_status(id,tool_key)
+		button.disabled = not status.get("allowed",false) or sim!=null
+		button.tooltip_text = str(status.get("reason",""))
+	for index in range(care_labels.size()-1,-1,-1):
+		var note: Label = care_labels[index]
+		if not is_instance_valid(note): care_labels.remove_at(index); continue
+		var id: String = str(note.get_meta("care_plant_id",""))
+		if note.has_meta("care_tool_note"):
+			var status: Dictionary = state.care_status(id,str(note.get_meta("care_tool_note")))
+			note.text = CareUI.status_text(status)
+		elif note.get_meta("care_measurement","")=="life": note.text = CareUI.life_text(self,id)
+		elif note.get_meta("care_measurement","")=="height": note.text = "%s cm" % CareUI._number(float(state.plant_measurements(id).get("height_cm",0)))
+		elif note.get_meta("care_measurement","")=="weight": note.text = "%s g" % CareUI._number(float(state.plant_measurements(id).get("weight_g",0)))
+		Locale.apply_tree(note)
+
+func _measurement_label(id: String) -> Label:
+	var label: Label = _wrap(CareUI.measurement_text(state.plant_measurements(id)),14,INK)
+	label.set_meta("plant_measurements",id)
+	return label
+
+func _care_entry(id: String) -> Button:
+	var button: Button = _action_button("Give this plant some love",func(): _open_care(id),"open_care",id)
+	button.add_theme_stylebox_override("normal",_style(Color("ffe58e"),Color("c7a25d"),0,12,10))
+	return button
+
+func _open_care(id: String = "",feedback: String = "") -> void:
+	CareUI.show(self,id,feedback)
+
+func _apply_care(id: String,tool_key: String) -> void:
+	if sim!=null:
+		_toast("Let the battle finish before using your tools.")
+		return
+	var before: Dictionary = state.plant_measurements(id)
+	var scroll_position: int = modal_scroll.scroll_vertical if is_instance_valid(modal_scroll) else 0
+	var result: Dictionary = state.apply_care(id,tool_key)
+	var message: String = str(result.get("message",""))
+	if result.get("ok",false):
+		var after: Dictionary = state.plant_measurements(id)
+		match tool_key:
+			"growth": message = "%s stretched from %s to %s cm!" % [state.get_plant(id).name,CareUI._number(float(before.height_cm)),CareUI._number(float(after.height_cm))]
+			"compost": message = "%s grew from %s to %s g!" % [state.get_plant(id).name,CareUI._number(float(before.weight_g)),CareUI._number(float(after.weight_g))]
+			"water": message = "A refreshing drink! %s gets one more minute of life." % state.get_plant(id).name
+			"longevity": message = "Ten more minutes of growing together with %s!" % state.get_plant(id).name
+			"sunlamp": message = "%s is all grown up and ready to breed!" % state.get_plant(id).name
+			"ripening": message = "Fruit's ready! Time to harvest %s's fruit." % state.get_plant(id).name
+		_play_sound("bloom" if tool_key in ["growth","sunlamp","ripening"] else "ui")
+		_refresh()
+	_open_care(id,message)
+	modal_scroll.set_deferred("scroll_vertical",scroll_position)
+	_toast(message)
+	if result.get("ok",false): _care_sparkles()
+
+func _care_sparkles() -> void:
+	var center := Vector2(size.x*0.5,size.y*0.42)
+	for index in range(9):
+		var spark := CareSpark.new()
+		spark.tool = "spark"
+		spark.size = Vector2(24,24)
+		spark.position = center
+		spark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(spark)
+		var direction := Vector2.from_angle(float(index)*TAU/9.0)
+		var tw := spark.create_tween().set_parallel(true)
+		tw.tween_property(spark,"position",center+direction*(75+index%3*23)-Vector2(0,45),0.7).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.tween_property(spark,"modulate:a",0.0,0.45).set_delay(0.2)
+		tw.chain().tween_callback(spark.queue_free)
+
+func _append_reproduction_block(target: VBoxContainer,p: Dictionary) -> void:
+	target.add_child(_measurement_label(str(p.id)))
+	target.add_child(_care_entry(str(p.id)))
+	target.add_child(_wrap("Combined lineages: %s" % _lineage_text(p),12,Color("b8c9a3")))
+	target.add_child(_live_life_label(str(p.id)))
+	target.add_child(_life_meter(str(p.id)))
+	target.add_child(_live_fruit_label(str(p.id)))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation",6)
+	target.add_child(row)
+	row.add_child(_harvest_button(str(p.id)))
+	row.add_child(_action_button("Fruit & seeds",_open_seeds,"open_nursery"))
+	target.add_child(_action_button("Traits & breeding",func(): _open_dna(str(p.id)),"view_dna",str(p.id)))
+
 func _refresh_side() -> void:
 	_clear(side_content)
 	if sim != null:
@@ -452,14 +720,15 @@ func _refresh_side() -> void:
 		return
 	if selected_id != "" and state.plants.has(selected_id):
 		var p: Dictionary = state.get_plant(selected_id)
-		side_content.add_child(_label("SPECIMEN / %s" % selected_id.to_upper().right(6), 10, MUTED))
+		side_content.add_child(_label("SAY HELLO TO YOUR PLANT", 10, MUTED))
 		var art := Portrait.new()
 		art.plant = p
-		art.custom_minimum_size = Vector2(240, 172)
+		art.custom_minimum_size = Vector2(240, 228)
 		side_content.add_child(art)
 		side_content.add_child(_label(str(p.name), 25, INK, true))
 		side_content.add_child(_label("%s · %s · GENERATION %d" % [p.type, p.rarity, p.generation], 11, AMBER))
 		side_content.add_child(_wrap("%s tissue · %s pattern" % [_gene(p,"texture"), _gene(p,"pattern")], 13))
+		_append_reproduction_block(side_content,p)
 		_line(side_content)
 		side_content.add_child(_wrap(" / ".join(p.get("skills", [])), 13, Color("b6c5a3")))
 		side_content.add_child(_wrap("Vitality %d   Growth %d   Bloom %d" % [p.stats.vitality, p.stats.growth, p.stats.bloom], 12))
@@ -472,9 +741,23 @@ func _refresh_side() -> void:
 		if state.display_bed.has(selected_id): side_content.add_child(_button("Lift from display bed",func(): state.remove_from_display(selected_id); selected_id = ""; _refresh()))
 		side_content.add_child(_button("Return to garden notes", func(): selected_id = ""; moving = false; _refresh_side()))
 	else:
-		side_content.add_child(_label("A STUDY IN COEXISTENCE", 10, MUTED))
-		side_content.add_child(_label("Beauty has\nits own ecology.", 25, INK, true))
-		side_content.add_child(_wrap("Different forms. Shared pigments. An improbable family, slowly finding its balance.", 14))
+		side_content.add_child(_label("LET'S GROW SOMETHING WONDERFUL", 10, MUTED))
+		side_content.add_child(_label("Little sprouts.\nBig surprises!",25,INK,true))
+		side_content.add_child(_wrap("Make a giant, raise a tiny favorite, or bring home a wild new friend. Every plant is a little different.",14))
+		side_content.add_child(_action_button("Open the tool shed",func(): _open_care(),"open_care"))
+		var records: Dictionary = CareUI.garden_records(self)
+		if not str(records.tallest).is_empty():
+			side_content.add_child(_label("YOUR GARDEN GIANTS",11,AMBER))
+			side_content.add_child(_wrap("Tallest: %s · %s cm" % [state.get_plant(str(records.tallest)).name,CareUI._number(float(records.height))],13,INK))
+			side_content.add_child(_wrap("Heaviest: %s · %s g" % [state.get_plant(str(records.heaviest)).name,CareUI._number(float(records.weight))],13,INK))
+		else:
+			side_content.add_child(_wrap("Your seeds are ready for a fresh start.",14,INK))
+			side_content.add_child(_action_button("Plant a seed",_open_seeds,"open_nursery"))
+		side_content.add_child(_wrap("Mix two plants → pick their fruit → plant the seeds → meet your new plant pals!",14,INK))
+		var overview: Dictionary = state.fruit_overview()
+		side_content.add_child(_wrap("%d ripe fruit · %d harvested fruit · %d seeds" % [overview.get("ready",0),overview.get("fruits",0),state.seed_bank.size()],13,AMBER))
+		side_content.add_child(_action_button("Choose two parents →",func(): lab_mode="Crossbreed"; _open_lab(),"open_breeding"))
+		side_content.add_child(_action_button("Harvest fruit & sow seeds",_open_seeds,"open_nursery"))
 		_line(side_content)
 		var s: Dictionary = state.display_score()
 		for key in ["diversity", "harmony", "rarity"]:
@@ -489,7 +772,9 @@ func _refresh_side() -> void:
 		side_content.add_child(_button("Gather display rewards", _claim_display))
 		side_content.add_child(_button("Collect daily growth", _collect_daily))
 		side_content.add_child(_button("Field guide",_open_guide))
-		side_content.add_child(_wrap("FIELD NOTE  /  01\nSelect a specimen, then touch an empty soil cell. Or drag it directly into the bed.", 12))
+		side_content.add_child(_button("Sound & language",_open_settings))
+		side_content.add_child(_button("Display & resolution",_open_display_settings))
+		side_content.add_child(_wrap("Tap a plant to say hello. Drag it into the grow patch, or grab a tool and help it flourish!", 12))
 
 func _meter(value: float, color: Color) -> ProgressBar:
 	var bar := ProgressBar.new()
@@ -504,6 +789,7 @@ func _gene(p: Dictionary, key: String) -> String:
 	return str(p.get("genes", {}).get(key, {}).get("dominant", "—"))
 
 func _choose_plant(id: String, zone: String, index: int) -> void:
+	_play_sound("ui")
 	if sim != null:
 		if id != "": _open_detail(id)
 		return
@@ -527,22 +813,29 @@ func _drop_plant(id: String, zone: String, index: int) -> void:
 		"display": ok = state.place_in_display(id, index)
 		"tray": state.bench(id); ok = true
 	if ok:
+		_play_sound("seed")
 		selected_id = ""
 		moving = false
 		last_log = "A new arrangement. Roots begin to find one another."
 		state.save_game()
 		_refresh()
-	else: _toast("This specimen is still growing. Let it mature before planting.")
+	else: _toast("Withered plants remain in the archive. Sow their seeds to continue the lineage." if state.get_plant(id).get("withered",false) else "This specimen is still growing. Let it mature before planting.")
 
 func _compact_plant(id: String) -> void:
 	var p: Dictionary = state.get_plant(id)
 	_open_modal(str(p.name), "specimen")
+	modal_content.add_child(_measurement_label(id))
+	modal_content.add_child(_care_entry(id))
 	modal_content.add_child(_wrap("%s · %s · G%d\n%s pattern · %s\nVitality %d · Growth %d · Bloom %d" % [p.type,p.rarity,p.generation,_gene(p,"pattern")," / ".join(p.skills),p.stats.vitality,p.stats.growth,p.stats.bloom], 14, INK))
+	modal_content.add_child(_live_life_label(id))
+	modal_content.add_child(_live_fruit_label(id))
 	var row := HBoxContainer.new()
 	modal_content.add_child(row)
 	row.add_child(_button("Detail", func(): _open_detail(id)))
 	row.add_child(_button("Breed", func(): _breed_from(id)))
 	row.add_child(_button("Move", func(): moving = true; _close_modal(); _toast("Choose a soil cell or display slot.")))
+	modal_content.add_child(_action_button("Traits & breeding",func(): _open_dna(id),"view_dna",id))
+	modal_content.add_child(_harvest_button(id))
 	if state.display_bed.has(id): modal_content.add_child(_button("Lift from display bed",func(): state.remove_from_display(id); selected_id = ""; _close_modal(); _refresh()))
 
 func _toast(message: String) -> void:
@@ -560,7 +853,7 @@ func _open_modal(title: String, kind: String = "") -> void:
 	modal.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(modal)
 	var shade := ColorRect.new()
-	shade.color = Color(0.015,0.035,0.028,0.86)
+	shade.color = Color(0.22,0.36,0.20,0.48)
 	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	modal.add_child(shade)
 	shade.gui_input.connect(func(event):
@@ -596,13 +889,14 @@ func _open_modal(title: String, kind: String = "") -> void:
 	panel.modulate.a = 0
 	var tw := panel.create_tween()
 	tw.tween_property(panel, "modulate:a", 1.0, 0.22)
+	call_deferred("_localize_ui")
 
 func _position_modal() -> void:
 	if not is_instance_valid(modal): return
 	var panel: Control = modal.get_node("Panel")
 	var width: float = minf(860 if modal_kind == "wild_encounter" else 820, size.x - 28)
 	var height: float = minf(820, size.y - 50)
-	if modal_kind == "specimen": height = 280
+	if modal_kind == "specimen": height = minf(470,size.y-50)
 	panel.position = Vector2((size.x-width)*0.5, (size.y-height)*0.5)
 	panel.size = Vector2(width, height)
 
@@ -614,7 +908,12 @@ func _close_modal() -> void:
 	modal_kind = ""
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F11:
+		_toggle_fullscreen()
+		get_viewport().set_input_as_handled()
+		return
 	if event.is_action_pressed("ui_cancel"):
+		_play_sound("back")
 		if is_instance_valid(modal): _close_modal()
 		else:
 			selected_id = ""
@@ -622,18 +921,48 @@ func _unhandled_input(event: InputEvent) -> void:
 			_refresh_side()
 		get_viewport().set_input_as_handled()
 
+func _inspection_plant(id: String) -> Dictionary:
+	var owned: Dictionary = state.get_plant(id)
+	if not owned.is_empty(): return owned
+	var active: Dictionary = state.expedition.get("active_encounter",{})
+	if str(active.get("plant",{}).get("id",""))==id: return active.plant
+	for seed: Dictionary in state.seed_bank:
+		var genome: Dictionary = seed.get("genome",{})
+		if str(genome.get("id",""))==id: return genome
+	var external: Array = scouted_plants.duplicate()
+	if sim!=null:
+		for fighter in sim.fighters: external.append(fighter.plant)
+	for candidate: Dictionary in external:
+		if str(candidate.get("id",""))==id: return candidate
+		if candidate.get("pedigree",{}).has(id): return candidate.pedigree[id]
+	return {}
+
+func _open_dna(id: String) -> void:
+	GeneticsUI.show_traits(self,id)
+
+func _open_dna_compare(id: String,mate_id: String = "",goal_key: String = "pattern",goal_value: Variant = null) -> void:
+	GeneticsUI.show_cross(self,id,mate_id,goal_key,goal_value)
+
+func _use_dna_pair(id: String,mate_id: String) -> void:
+	var a: Dictionary = state.get_plant(id)
+	var b: Dictionary = state.get_plant(mate_id)
+	if a.is_empty() or b.is_empty() or id==mate_id or not a.get("mature",false) or not b.get("mature",false) or a.get("withered",false) or b.get("withered",false) or sim!=null:
+		_toast("Choose two living, mature plants for this cross.")
+		return
+	parent_a = id
+	parent_b = mate_id
+	lab_mode = "Crossbreed"
+	_open_lab()
+
 func _open_detail(id: String) -> void:
-	var p: Dictionary = state.get_plant(id)
-	if p.is_empty() and sim != null:
-		for f in sim.fighters:
-			if str(f.id) == id: p = f.plant
+	var p: Dictionary = _inspection_plant(id)
 	if p.is_empty(): return
 	_open_modal(str(p.name), "detail")
 	var top: BoxContainer = VBoxContainer.new() if small_layout else HBoxContainer.new()
 	modal_content.add_child(top)
 	var art := Portrait.new()
 	art.plant = p
-	art.custom_minimum_size = Vector2(180 if small_layout else 250, 250)
+	art.custom_minimum_size = Vector2(180 if small_layout else 270, 260 if small_layout else 310)
 	top.add_child(art)
 	var bio := VBoxContainer.new()
 	bio.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -653,6 +982,8 @@ func _open_detail(id: String) -> void:
 		bio.add_child(_button("Save name", func(): state.rename_plant(id,rename.text); _refresh(); _open_detail(id)))
 		bio.add_child(_button("Unpin favorite" if p.get("favorite",false) else "Keep as favorite", func(): state.toggle_favorite(id); _refresh(); _open_detail(id)))
 		bio.add_child(_button("Choose as parent", func(): _breed_from(id)))
+	if state.plants.has(id): _append_reproduction_block(modal_content,p)
+	else: modal_content.add_child(_action_button("Traits & breeding",func(): _open_dna(id),"view_dna",id))
 	_line(modal_content)
 	modal_content.add_child(_label("THE EXPRESSED GENOME", 11, AMBER))
 	modal_content.add_child(_wrap("Each column is inherited independently. Carried genes can reappear in a later generation.", 12))
@@ -661,12 +992,12 @@ func _open_detail(id: String) -> void:
 	genes.add_theme_constant_override("h_separation", 25)
 	genes.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	modal_content.add_child(genes)
-	for head in ["TRAIT", "EXPRESSED", "CARRIED"]: genes.add_child(_label(head, 10, MUTED))
+	for head in ["TRAIT", "SHOWN", "HIDDEN COPY"]: genes.add_child(_label(head, 10, MUTED))
 	for key in p.get("genes", {}):
 		var gene: Dictionary = p.genes[key]
 		genes.add_child(_label(str(key).capitalize(), 12, MUTED))
-		genes.add_child(_label(str(gene.get("dominant","—")), 12, INK))
-		genes.add_child(_label(str(gene.get("recessive","—")), 12, Color("a2b69a")))
+		genes.add_child(_label(Guide.trait_value(str(key),gene.get("dominant","—")), 12, INK))
+		genes.add_child(_label(Guide.trait_value(str(key),gene.get("recessive","—")), 12, Color("a2b69a")))
 	_line(modal_content)
 	modal_content.add_child(_label("VITAL SIGNS", 11, AMBER))
 	var stats_row := GridContainer.new()
@@ -681,13 +1012,13 @@ func _open_detail(id: String) -> void:
 	_append_descendants(id, 0)
 	if p.get("graft_history",[]).size() > 0:
 		modal_content.add_child(_label("GRAFT RECORD", 11, AMBER))
-		for record in p.graft_history: modal_content.add_child(_wrap(str(record), 12))
+		for record in p.graft_history: modal_content.add_child(_wrap(_history_note(record,"graft"), 12))
 	if p.get("graft_attempts",[]).size() > 0:
 		modal_content.add_child(_label("REJECTED JOINS",11,AMBER))
-		for record in p.graft_attempts: modal_content.add_child(_wrap(str(record),12))
+		for record in p.graft_attempts: modal_content.add_child(_wrap(_history_note(record,"rejected"),12))
 	if p.get("mutation_history",[]).size() > 0:
 		modal_content.add_child(_label("MUTATION RECORD", 11, AMBER))
-		for record in p.mutation_history: modal_content.add_child(_wrap(str(record), 12))
+		for record in p.mutation_history: modal_content.add_child(_wrap(_history_note(record,"mutation"), 12))
 
 func _append_ancestry(p: Dictionary, depth: int, pedigree: Dictionary = {}) -> void:
 	if depth > 3: return
@@ -715,8 +1046,16 @@ func _breed_from(id: String) -> void:
 	if sim != null:
 		_toast("Let the gardens settle before breeding.")
 		return
-	if parent_a == "" or parent_a == id: parent_a = id
-	else: parent_b = id
+	var selected: Dictionary = state.get_plant(id)
+	if selected.get("withered",false):
+		_toast("This plant has naturally withered. Grow its seeds to continue the lineage.")
+		return
+	if not selected.get("mature",false):
+		_toast("Let this seedling mature before using it as a parent.")
+		return
+	parent_a = id
+	if parent_b == id: parent_b = ""
+	lab_mode = "Crossbreed"
 	_open_lab()
 
 func _open_lab() -> void:
@@ -725,16 +1064,17 @@ func _open_lab() -> void:
 		return
 	var mature: Array = []
 	for id in state.plant_order:
-		if state.get_plant(str(id)).get("mature",false): mature.append(str(id))
+		if state.get_plant(str(id)).get("mature",false) and not state.get_plant(str(id)).get("withered",false): mature.append(str(id))
 	if mature.is_empty():
-		_toast("Your plants are unfurling. Come back when one has matured.")
+		_toast("Raise a seedling or collect a living plant before choosing mature parents. Archived plants keep their traits in seeds.")
 		return
 	if parent_a == "" or not mature.has(parent_a): parent_a = str(mature[0])
-	if parent_b == "" or not mature.has(parent_b) or parent_b == parent_a:
+	if parent_b == "" or not mature.has(parent_b):
 		for id in mature:
 			if id != parent_a: parent_b = str(id); break
 	_open_modal("The propagation laboratory", "lab")
-	modal_content.add_child(_wrap("A new organism begins as a question. What might these two become?", 14))
+	modal_content.add_child(_wrap("Any two mature plants can cross. Hybrids can cross with other hybrids, wild plants, or either founding lineage. There is no species pairing lock.",14))
+	modal_content.add_child(_wrap("Light %d · Grafting material %d · Mutation agents %d" % [state.resources.sunlight,state.resources.grafts,state.resources.agents],11,AMBER))
 	var tabs := HBoxContainer.new()
 	modal_content.add_child(tabs)
 	for mode in ["Crossbreed","Graft","Mutate"]:
@@ -749,7 +1089,13 @@ func _open_lab() -> void:
 		var column := VBoxContainer.new()
 		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		parents.add_child(column)
-		column.add_child(_label(("HOST" if lab_mode == "Graft" else "PARENT A") if which == 0 else ("DONOR" if lab_mode == "Graft" else "PARENT B"), 10, MUTED))
+		var slot_label: String = ("HOST" if lab_mode == "Graft" else "MOTHER / FRUIT BEARER") if which==0 else ("DONOR" if lab_mode == "Graft" else "FATHER / POLLEN")
+		var choose_slot: Button = _button(slot_label,func(): active_parent_slot=which; _open_lab())
+		choose_slot.add_theme_font_size_override("font_size",10)
+		choose_slot.set_meta("parent_slot",which)
+		choose_slot.set_meta("reproduction_action","select_parent_slot")
+		if active_parent_slot==which: choose_slot.add_theme_color_override("font_color",AMBER)
+		column.add_child(choose_slot)
 		var portrait := Cell.new()
 		portrait.plant = state.get_plant(parent_id)
 		portrait.zone = "parent"
@@ -769,12 +1115,17 @@ func _open_lab() -> void:
 			pick.set_item_metadata(pick.item_count-1, id)
 			if id == parent_id: pick.select(pick.item_count-1)
 		column.add_child(pick)
+		pick.set_meta("parent_slot",which)
 		if which == 0: lab_pick_a = pick
 		else: lab_pick_b = pick
 		pick.item_selected.connect(func(i):
 			if which == 0: parent_a = str(pick.get_item_metadata(i))
 			else: parent_b = str(pick.get_item_metadata(i))
 			_open_lab())
+		var specimen: Dictionary = state.get_plant(parent_id)
+		if not specimen.is_empty():
+			column.add_child(_wrap("G%d · %s" % [specimen.generation,_lineage_text(specimen)],11,AMBER))
+			column.add_child(_action_button("Traits & breeding",func(): _open_dna(parent_id),"view_dna",parent_id))
 		# A portrait is also a drag target for choosing a parent from the garden.
 	var specimen_scroll := ScrollContainer.new()
 	specimen_scroll.custom_minimum_size.y = 118
@@ -789,8 +1140,9 @@ func _open_lab() -> void:
 		candidate.zone = "candidate"
 		candidate.custom_minimum_size = Vector2(112,110)
 		candidate.chosen.connect(func(id,_zone,_index):
-			if parent_a == id: return
-			parent_b = id
+			if active_parent_slot==0: parent_a = id
+			else: parent_b = id
+			active_parent_slot = 1-active_parent_slot
 			_open_lab())
 		candidates.add_child(candidate)
 	var a: Dictionary = state.get_plant(parent_a)
@@ -799,9 +1151,21 @@ func _open_lab() -> void:
 	match lab_mode:
 		"Crossbreed":
 			modal_content.add_child(_label("RECOMBINATION / POSSIBLE INHERITANCE", 11, AMBER))
-			modal_content.add_child(_wrap("Types: %s or %s; a secondary type may emerge.\nPattern: %s or %s; carried recessives can reappear.\nGeneration %d · Each stat is the parental average ±10%%.\nEvery visual slot inherits independently.\nParents are kept. Offspring unfurl in 12 seconds." % [a.get("type","?"), b.get("type","?"), _gene(a,"pattern"), _gene(b,"pattern"), maxi(int(a.get("generation",1)), int(b.get("generation",1)))+1], 14, INK))
-			modal_content.add_child(_wrap("ODDS BEFORE PROPAGATION\nPrimary lineage: 50% each parent. Different parent types: 45% secondary-type inheritance. Each parental allele: 50% chance of transmission, then 50% expression. Pigments: 15% blending. Different skill alleles: 30% dual expression. G3+ different pattern alleles: 8% rare combination. Each recorded graft: 20% inheritance.",12,MUTED))
-			_lab_action("Crossbreed · 30 gathered light",_crossbreed,"Parents remain · 50/50 primary lineage · 45% secondary type · 15% pigment blending · ±10% stats")
+			modal_content.add_child(_wrap("%s × %s → generation %d\nColor, pattern, shape, size, and skills recombine independently. Each locus carries an expressed allele and a hidden allele.\nBoth lineages remain in the descendants and can recombine again." % [a.get("name","?"),b.get("name","?"),maxi(int(a.get("generation",1)),int(b.get("generation",1)))+1],14,INK))
+			modal_content.add_child(_wrap("Pollinate → fruit ripens in %d seconds → harvest → extract 2 seeds → sow → mature in %d seconds → cross again. Both parents are kept." % [State.FRUIT_GROW_SECONDS,State.GROW_SECONDS],13,Color("b8c9a3")))
+			modal_content.add_child(_wrap("Preview their offspring to compare colors, hidden traits, abilities, and the chance of getting the trait you want.",12,MUTED))
+			var preview: Button = _action_button("Preview offspring traits",func(): _open_dna_compare(parent_a,parent_b),"dna_compare",parent_a)
+			preview.disabled = a.is_empty() or b.is_empty() or parent_a==parent_b
+			modal_content.add_child(preview)
+			var pollinate: Button = _lab_action("Pollinate & grow fruit · %d light" % State.POLLINATION_COST,_crossbreed,"Harvested hybrid fruit gives 2 seeds and 30 light. Plant each seed for 10 light; the breeding cycle can sustain itself.")
+			pollinate.set_meta("reproduction_action","pollinate")
+			pollinate.set_meta("parent_a",parent_a)
+			pollinate.set_meta("parent_b",parent_b)
+			pollinate.disabled = a.is_empty() or b.is_empty() or parent_a==parent_b or int(state.resources.sunlight)<State.POLLINATION_COST or not state.fruit_status(parent_a).get("pollination",{}).is_empty()
+			if parent_a==parent_b: modal_content.add_child(_wrap("Choose two different plants. Every species and hybrid combination is allowed.",12,AMBER))
+			elif not state.fruit_status(parent_a).get("pollination",{}).is_empty():
+				modal_content.add_child(_live_fruit_label(parent_a))
+				modal_content.add_child(_action_button("Open fruit & seeds",_open_seeds,"open_nursery"))
 		"Graft":
 			var odds: int = roundi(state.graft_odds(parent_a,parent_b)*100)
 			modal_content.add_child(_label("A PRECISE, IMPERFECT JOIN", 11, AMBER))
@@ -809,7 +1173,8 @@ func _open_lab() -> void:
 			action_picker = OptionButton.new()
 			for trait_name in ["feature","skill","stat"]: action_picker.add_item(trait_name.capitalize()); action_picker.set_item_metadata(action_picker.item_count-1, trait_name)
 			modal_content.add_child(action_picker)
-			_lab_action("Attempt graft · 1 grafting material",_graft,"%d%% success / %d%% rejection · Host unharmed · Donor rests · Material spent either way" % [odds,100-odds])
+			var graft_button: Button = _lab_action("Attempt graft · 1 grafting material",_graft,"%d%% success / %d%% rejection · Host unharmed · Donor rests · Material spent either way" % [odds,100-odds])
+			graft_button.set_meta("reproduction_action","graft")
 		"Mutate":
 			modal_content.add_child(_label("LET THE GENOME WANDER", 11, AMBER))
 			modal_content.add_child(_wrap("70% new trait · 20% no change · 10% visible deformity.\nRadiation: broad change; an 8% carnivorous reversion chance within the new-trait outcome (5.6% overall).\nChemical: rerolls the pattern slot. An agent is consumed in every outcome. Mutation is permanent and inheritable.", 14, INK))
@@ -821,29 +1186,43 @@ func _open_lab() -> void:
 	lab_result = _wrap("Every experiment writes a permanent entry in the lineage.", 12)
 	modal_content.add_child(lab_result)
 
-func _lab_action(text: String, action: Callable, odds: String) -> void:
+func _lab_action(text: String, action: Callable, odds: String) -> Button:
 	var footer := VBoxContainer.new()
 	footer.add_theme_constant_override("separation",8)
 	modal.get_node("Panel").get_child(0).add_child(footer)
 	footer.add_child(_wrap(odds,11,AMBER))
-	footer.add_child(_button(text,action,Vector2(0,48)))
+	var button: Button = _button(text,action,Vector2(0,48))
+	footer.add_child(button)
+	return button
 
 func _crossbreed() -> void:
-	var result: Dictionary = state.crossbreed(parent_a, parent_b)
+	var result: Dictionary = state.pollinate(parent_a,parent_b)
 	if result.get("ok",false):
+		_play_sound("breed")
 		_refresh()
-		_reveal(result.get("plant",{}), str(result.get("message","A new lineage begins.")))
+		_open_modal("A new lineage is forming","pollination")
+		modal_content.add_child(_wrap("%s × %s" % [state.get_plant(parent_a).name,state.get_plant(parent_b).name],23,INK))
+		modal_content.add_child(_wrap(str(result.get("message","Pollination recorded.")),14,Color("b8c9a3")))
+		modal_content.add_child(_live_fruit_label(parent_a,18))
+		modal_content.add_child(_wrap("The mother carries the fruit. Its two seeds already contain independently recombined DNA from both parents. Harvest, extract the seeds, and plant them to meet the descendants.",14))
+		modal_content.add_child(_wrap("Parents stay alive. Every descendant can become a parent in the next cross.",14,AMBER))
+		modal_content.add_child(_harvest_button(parent_a))
+		modal_content.add_child(_action_button("Open fruit & seeds",func(): nursery_tab="plants"; _open_seeds(),"open_nursery"))
+		modal_content.add_child(_button("Plan another cross",_open_lab))
+		modal_content.add_child(_button("Return to my garden",_close_modal))
 	else: lab_result.text = str(result.get("message","Choose two different mature parents."))
 
 func _graft() -> void:
 	var trait_name: String = str(action_picker.get_item_metadata(action_picker.selected))
 	var result: Dictionary = state.graft(parent_a, parent_b, trait_name)
+	_play_sound("graft" if result.get("success",false) else "collect_fail")
 	_refresh()
 	_toast(str(result.get("message","The graft is recorded.")))
 	_open_lab()
 
 func _mutate() -> void:
 	var result: Dictionary = state.mutate(parent_a, "radiation" if action_picker.selected == 0 else "chemical", "pattern")
+	if result.get("ok",false): _play_sound("mutate")
 	_refresh()
 	if result.get("ok",false): _reveal(state.get_plant(parent_a), str(result.get("message","The genome shifts.")))
 	else: lab_result.text = str(result.get("message","Mutation unavailable."))
@@ -868,9 +1247,21 @@ func _reveal(p: Dictionary, message: String) -> void:
 	modal_content.add_child(gene_notes)
 	for key in ["color","pattern","shape","form"]:
 		tw.tween_callback(func():
-			if is_instance_valid(gene_notes): gene_notes.text += "%s  /  %s\n" % [key.capitalize(),_gene(p,key)])
+			if is_instance_valid(gene_notes):
+				var raw: String = str(gene_notes.get_meta("reveal_source",""))+"%s  /  %s\n" % [str(Guide.LABELS.get(key,key.capitalize())),Guide.trait_value(key,_gene(p,key))]
+				gene_notes.set_meta("reveal_source",raw)
+				gene_notes.text = raw
+				Locale.apply_tree(gene_notes))
 		tw.tween_interval(0.35)
 	modal_content.add_child(_wrap("Already growing in your specimen tray. Its parents, carried genes, and history have been preserved.", 13))
+	modal_content.add_child(_wrap("Combined lineages: %s" % _lineage_text(p),13,AMBER))
+	modal_content.add_child(_live_life_label(str(p.id)))
+	modal_content.add_child(_action_button("Traits & breeding",func(): _open_dna(str(p.id)),"view_dna",str(p.id)))
+	var next_cross: Button = _action_button("Use for the next cross",func(): _breed_from(str(p.id)),"next_cross",str(p.id))
+	next_cross.disabled = not p.get("mature",false) or p.get("withered",false)
+	reproduction_buttons.append(next_cross)
+	modal_content.add_child(next_cross)
+	if not p.get("mature",false): modal_content.add_child(_button("Nurture · 5 light",func(): _perform_nurture(str(p.id))))
 	modal_content.add_child(_button("Return to my garden", func(): _close_modal(); _refresh()))
 	modal_content.add_child(_button("Read the genome", func(): _open_detail(str(p.id))))
 
@@ -880,31 +1271,180 @@ func _perform_nurture(id: String) -> void:
 	_refresh()
 
 func _open_seeds() -> void:
-	_open_modal("The seed archive", "seeds")
-	modal_content.add_child(_wrap("Each husk holds a tendency, never a promise. Plant a lineage and discover its expression. Planting costs 10 gathered light.", 14))
-	var note := _label("%d SEEDS IN STORAGE" % state.seed_bank.size(), 11, AMBER)
-	modal_content.add_child(note)
-	if state.seed_bank.is_empty(): modal_content.add_child(_wrap("The archive is resting. Battles, beauty thresholds, and daily growth bring new seeds.", 15))
-	for i in range(state.seed_bank.size()):
-		var seed_data: Dictionary = state.seed_bank[i]
-		var panel := PanelContainer.new()
-		panel.add_theme_stylebox_override("panel", _style(Color("1b3025"), Color("4a6249"), 5, 16, 14))
-		modal_content.add_child(panel)
+	if exploring: _return_from_wilderness()
+	_open_modal("Fruit & seed nursery","seeds")
+	var overview: Dictionary = state.fruit_overview()
+	modal_content.add_child(_wrap("Pollinate → harvest fruit → extract seeds → sow → grow → cross again. Each seed preserves its own complete inherited DNA.",14))
+	modal_content.add_child(_wrap("%d ripe fruit · %d harvested fruit · %d seeds" % [overview.get("ready",0),overview.get("fruits",0),state.seed_bank.size()],13,AMBER))
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation",6)
+	modal_content.add_child(tabs)
+	for tab: String in ["plants","fruits","seeds"]:
+		var title: String = {"plants":"Plants","fruits":"Fruit basket","seeds":"Seeds"}[tab]
+		var button: Button = _button(title,func(): nursery_tab=tab; _open_seeds())
+		button.set_meta("reproduction_action","nursery_tab")
+		button.set_meta("nursery_tab",tab)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.clip_text = true
+		if tab==nursery_tab: button.add_theme_color_override("font_color",AMBER)
+		tabs.add_child(button)
+	match nursery_tab:
+		"plants": _nursery_plants()
+		"fruits": _nursery_fruits()
+		_: _nursery_seeds()
+	var footer := VBoxContainer.new()
+	footer.add_theme_constant_override("separation",6)
+	modal.get_node("Panel").get_child(0).add_child(footer)
+	if nursery_tab=="plants":
+		var harvest: Button = _action_button("Harvest all ripe fruit",_harvest_all_fruit,"harvest_all")
+		harvest.disabled = int(overview.get("ready",0))==0 or sim!=null
+		reproduction_buttons.append(harvest)
+		footer.add_child(harvest)
+	elif nursery_tab=="fruits":
+		var extract: Button = _action_button("Extract all seeds",_extract_all_fruit,"extract_all")
+		extract.disabled = state.fruit_inventory.is_empty() or sim!=null
+		reproduction_buttons.append(extract)
+		footer.add_child(extract)
+	footer.add_child(_action_button("Choose parents for the next cross",func(): lab_mode="Crossbreed"; _open_lab(),"open_breeding"))
+
+func _nursery_card() -> VBoxContainer:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel",_style(Color("1b3025"),Color("4a6249"),0,12,12))
+	modal_content.add_child(panel)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation",8)
+	panel.add_child(column)
+	return column
+
+func _nursery_plants() -> void:
+	modal_content.add_child(_wrap("Mature plants bear natural fruit every 45 seconds. A selected mother can also carry one hybrid fruit from any other mature plant.",12))
+	for id: String in state.plant_order:
+		var p: Dictionary = state.get_plant(id)
+		var card: VBoxContainer = _nursery_card()
 		var row := HBoxContainer.new()
-		panel.add_child(row)
-		var labels := VBoxContainer.new()
-		labels.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(labels)
-		labels.add_child(_label(str(seed_data.get("species",seed_data.get("lineage","Uncatalogued seed"))), 21, INK, true))
-		labels.add_child(_wrap("%s · %s · %s tendency" % [seed_data.get("rarity","Common"),seed_data.get("type","Wild"),seed_data.get("pattern","Unresolved")], 12))
-		labels.add_child(_wrap("Pattern: 65% expressed, always carried. Matures in 12 seconds.",11))
-		row.add_child(_button("Plant", func():
-			if sim != null: _toast("Plant seeds once the roots have settled."); return
-			var result: Dictionary = state.plant_seed(i)
-			if result.get("ok",false): _refresh(); _reveal(result.get("plant",{}),str(result.get("message","A seed opens.")))
-			else: _toast(str(result.get("message","Not enough gathered light.")))))
-	_line(modal_content)
-	modal_content.add_child(_button("Gather daily growth", _collect_daily))
+		row.add_theme_constant_override("separation",12)
+		card.add_child(row)
+		var art := Portrait.new()
+		art.plant = p
+		art.custom_minimum_size = Vector2(70,86)
+		row.add_child(art)
+		var notes := VBoxContainer.new()
+		notes.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(notes)
+		notes.add_child(_wrap(str(p.name),19,INK))
+		notes.add_child(_wrap("G%d · %s" % [p.generation,_lineage_text(p)],11,MUTED))
+		notes.add_child(_live_fruit_label(id))
+		notes.add_child(_live_life_label(id))
+		var actions := HBoxContainer.new()
+		actions.add_theme_constant_override("separation",6)
+		card.add_child(actions)
+		actions.add_child(_harvest_button(id))
+		actions.add_child(_action_button("Traits & breeding",func(): _open_dna(id),"view_dna",id))
+		if not p.get("mature",true) and not p.get("withered",false): card.add_child(_button("Nurture · 5 light",func(): _perform_nurture(id); _open_seeds()))
+
+func _nursery_fruits() -> void:
+	if state.fruit_inventory.is_empty():
+		modal_content.add_child(_wrap("Your fruit basket is empty. Harvest ripe fruit from your plants, then extract its seeds here.",14))
+		return
+	for index in range(state.fruit_inventory.size()-1,-1,-1):
+		var fruit: Dictionary = state.fruit_inventory[index]
+		var fruit_id: String = str(fruit.id)
+		var names: Array = fruit.get("parent_names",[])
+		var card: VBoxContainer = _nursery_card()
+		card.add_child(_wrap("Hybrid fruit" if fruit.get("kind","")=="hybrid" else "Natural fruit",20,AMBER))
+		card.add_child(_wrap(" × ".join(PackedStringArray(names)),17,INK))
+		card.add_child(_wrap("Generation %d · %d seeds inside" % [fruit.get("generation",1),fruit.get("seeds",[]).size()],12))
+		card.add_child(_wrap("The stored embryos keep both expressed and hidden alleles, their parent identities, and the complete mixed lineage.",12,MUTED))
+		var extract: Button = _action_button("Extract seeds",func(): _extract_fruit(fruit_id),"extract")
+		extract.set_meta("fruit_id",fruit_id)
+		extract.disabled = sim!=null
+		card.add_child(extract)
+
+func _nursery_seeds() -> void:
+	modal_content.add_child(_wrap("Hybrid and harvested lineage seeds preserve their exact DNA. Sowing costs 10 light; seedlings mature in 12 seconds and can cross again.",12))
+	if state.seed_bank.is_empty():
+		modal_content.add_child(_wrap("No seeds stored. Harvest and open a fruit to continue a lineage.",14))
+		return
+	const PAGE_SIZE: int = 12
+	var pages: int = maxi(1,ceili(state.seed_bank.size()/float(PAGE_SIZE)))
+	seed_page = clampi(seed_page,0,pages-1)
+	var navigation := HBoxContainer.new()
+	navigation.add_theme_constant_override("separation",6)
+	modal_content.add_child(navigation)
+	var previous: Button = _button("Previous",func(): seed_page-=1; _open_seeds())
+	previous.disabled = seed_page==0
+	navigation.add_child(previous)
+	var page: Label = _wrap("Page %d / %d · newest first" % [seed_page+1,pages],12,MUTED)
+	page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	navigation.add_child(page)
+	var next: Button = _button("Next",func(): seed_page+=1; _open_seeds())
+	next.disabled = seed_page>=pages-1
+	navigation.add_child(next)
+	for offset in range(seed_page*PAGE_SIZE,mini(state.seed_bank.size(),(seed_page+1)*PAGE_SIZE)):
+		var seed_index: int = state.seed_bank.size()-1-offset
+		var seed_data: Dictionary = state.seed_bank[seed_index]
+		var genome: Dictionary = seed_data.get("genome",{})
+		var card: VBoxContainer = _nursery_card()
+		card.add_child(_wrap(str(seed_data.get("name",seed_data.get("species","Uncatalogued seed"))),19,INK))
+		if not genome.is_empty():
+			card.add_child(_wrap("G%d · %s" % [genome.get("generation",1),_lineage_text(genome)],12,AMBER))
+			card.add_child(_wrap("%s pattern · %s shape · %s form" % [_gene(genome,"pattern"),_gene(genome,"shape"),_gene(genome,"form")],12))
+			card.add_child(_wrap("Shows %s; carries %s as an alternative." % [Guide.trait_value("pattern",genome.genes.pattern.dominant),Guide.trait_value("pattern",genome.genes.pattern.recessive)],12,Color("b8c9a3")))
+			var inspect: Button = _action_button("View inherited traits",func(): _open_dna(str(genome.id)),"view_seed_dna")
+			inspect.set_meta("seed_index",seed_index)
+			card.add_child(inspect)
+		else:
+			card.add_child(_wrap("%s · %s · %s tendency" % [seed_data.get("rarity","Common"),seed_data.get("type","Wild"),seed_data.get("pattern","Unresolved")],12))
+			card.add_child(_wrap("Founding seed · a new expression of its archived lineage.",11,MUTED))
+		var plant: Button = _action_button("Sow seed · 10 light",func(): _plant_saved_seed(seed_index),"plant_seed")
+		plant.set_meta("seed_index",seed_index)
+		plant.disabled = sim!=null or int(state.resources.sunlight)<10
+		card.add_child(plant)
+
+func _harvest_fruit(id: String) -> void:
+	if sim!=null: _toast("Harvest once the roots have settled."); return
+	var result: Dictionary = state.harvest_fruit(id)
+	_toast(str(result.get("message","No ripe fruit yet.")))
+	if not result.get("ok",false): return
+	_play_sound("collect_success")
+	nursery_tab = "fruits"
+	_refresh()
+	_open_seeds()
+
+func _harvest_all_fruit() -> void:
+	if sim!=null: return
+	var result: Dictionary = state.harvest_all_fruit()
+	_toast(str(result.get("message","No ripe fruit yet.")))
+	if result.get("ok",false): _play_sound("collect_success")
+	nursery_tab = "fruits" if not state.fruit_inventory.is_empty() else "plants"
+	_refresh()
+	_open_seeds()
+
+func _extract_fruit(fruit_id: String) -> void:
+	if sim!=null: return
+	var result: Dictionary = state.extract_seeds(fruit_id)
+	_toast(str(result.get("message","No seeds to extract.")))
+	if result.get("ok",false): _play_sound("seed")
+	nursery_tab = "seeds"
+	seed_page = 0
+	_refresh()
+	_open_seeds()
+
+func _extract_all_fruit() -> void:
+	if sim!=null: return
+	var result: Dictionary = state.extract_all_seeds()
+	_toast(str(result.get("message","No seeds to extract.")))
+	if result.get("ok",false): _play_sound("seed")
+	nursery_tab = "seeds"
+	seed_page = 0
+	_refresh()
+	_open_seeds()
+
+func _plant_saved_seed(index: int) -> void:
+	if sim!=null: _toast("Plant seeds once the roots have settled."); return
+	var result: Dictionary = state.plant_seed(index)
+	if result.get("ok",false): _play_sound("seed"); _refresh(); _reveal(result.get("plant",{}),str(result.get("message","A seed opens.")))
+	else: _toast(str(result.get("message","Not enough gathered light.")))
 
 func _open_codex() -> void:
 	_open_modal("An atlas of living things", "codex")
@@ -986,10 +1526,10 @@ func _open_guide() -> void:
 	for entry in [
 		["01  /  Make a garden", "Drag a specimen into the 3 × 3 rooting bed. Or select a packet, close its inspection, then tap a soil cell. Drag a plant back to the tray to bench it. Use Move to swap occupied cells."],
 		["02  /  Keep something beautiful", "The six display cells are a separate arrangement. A displayed plant can still breed and battle. Diversity rewards different organisms; harmony rewards related pigments and markings; rarity rewards unusual genes. Gather rewards at score thresholds."],
-		["03  /  Begin a lineage", "Select a plant and choose Breed to carry it into the laboratory. Each gene has an expressed value and a carried recessive. Children recombine the parents, with ±10% stat variance. They mature in 12 seconds. Examine any plant for its full pedigree."],
+		["03  /  Begin a lineage", "Choose any two mature plants in Crossbreeding. Pollinate for 10 light, wait 18 seconds, harvest the hybrid fruit, extract its two seeds, then sow for 10 light each. Seedlings mature in 12 seconds and can cross again. View DNA to trace each expressed and carried allele to its parent."],
 		["04  /  Make a careful mistake", "Grafts add one feature, skill, or stat bias, with 90% same-type and 65% cross-type base success. Donors rest; hosts survive rejection. Mutation is 70% change, 20% unchanged, 10% deformity. Pin a favorite to protect it as a donor."],
 		["05  /  Let roots meet", "Battle unfolds in the same soil. Inspect the rival before committing. Front rows contact first; three matching types activate a shared ecology. Roots sustain, vines entangle, spores drift, toxins seep. At 25 seconds, release your one team Bloom Burst. Switch to 2× or pause to inspect. Withered plants recover afterward."],
-		["06  /  Return tomorrow", "Your plants, garden arrangement, discoveries, and full ancestry save automatically on this device. Daily growth, display rewards, and battles all replenish the archive. No account, shop, or payment is needed."]
+		["06  /  Continue a living lineage", "Plants age through 20 minutes of maturity and 5 minutes of aging during active play, then naturally wither. DNA and pedigree stay in the archive, and a final fruit can continue the lineage through a new seed. Offline time ripens fruit and seedlings but does not age mature plants. All stages save automatically."]
 	]:
 		modal_content.add_child(_label(entry[0], 11, AMBER))
 		modal_content.add_child(_wrap(entry[1], 14, INK))
@@ -1058,6 +1598,8 @@ func _scout_detail(p: Dictionary) -> void:
 
 func _start_battle() -> void:
 	_close_modal()
+	if is_instance_valid(soundscape): soundscape.set_context("battle")
+	_play_sound("battle_start")
 	var team: Array = []
 	var positions: Array = []
 	for i in range(9):
@@ -1179,6 +1721,7 @@ func _toggle_speed() -> void:
 func _bloom_burst() -> void:
 	if sim == null or paused: return
 	if sim.team_burst():
+		_play_sound("bloom")
 		last_log = "The garden opens as one. A single, shared flowering."
 		status_label.text = last_log
 		for c in cells.values(): c.portrait.activity = 1.0
@@ -1207,6 +1750,8 @@ func _finish_battle() -> void:
 	var won: bool = int(sim.winner) == 0
 	var draw: bool = int(sim.winner) == -1
 	var summary_text: String = sim.summary()
+	_play_sound("battle_win" if won else "battle_lose")
+	if is_instance_valid(soundscape): soundscape.set_context("garden")
 	var result: Dictionary = state.battle_reward(won)
 	sim = null
 	paused = false
@@ -1229,6 +1774,13 @@ func _finish_battle() -> void:
 	modal_content.add_child(_button("Breed the next generation",func(): _open_lab()))
 
 func _process(delta: float) -> void:
+	locale_timer += delta
+	if locale_timer >= 0.2:
+		locale_timer = 0.0
+		_localize_ui()
+	if preferences_paused_battle and not is_instance_valid(modal):
+		preferences_paused_battle = false
+		if sim != null: paused = false
 	if exploring and wild_encounter_open and not is_instance_valid(modal):
 		state.leave_wild_encounter()
 		wild_encounter_open = false
@@ -1239,15 +1791,26 @@ func _process(delta: float) -> void:
 		if toast_time <= 0: toast_panel.visible = false
 	save_timer += delta
 	if save_timer >= 1.0:
+		var active_seconds: float = save_timer
 		save_timer = 0
-		if state.tick_growth():
+		var grew: bool = state.tick_growth()
+		# A plant's active-play clock rests when the game is in the background.
+		# Fruit and seedling timers still use wall time, as before.
+		var playing: bool = DisplayServer.get_name()=="headless" or get_window().has_focus()
+		var life_changed: bool = state.advance_lifecycle(active_seconds if playing else 0.0)
+		var fruit_changed: bool = state.tick_reproduction()
+		life_save_timer += active_seconds
+		if life_changed or life_save_timer>=10.0:
+			life_save_timer = 0.0
+			state.save_game()
+		if grew:
 			last_log = "A new specimen has unfurled. Its first mature leaves gather light."
-			if sim == null: _refresh()
-		if state.last_seed_collection > 0 and int(Time.get_unix_time_from_system()) - state.last_seed_collection >= 180:
-			var harvest: Dictionary = state.collect_mature_seeds()
-			if harvest.get("ok",false):
-				_toast(str(harvest.get("message","Mature plants have left new seeds.")))
-				if sim == null: _refresh()
+		if sim==null and (grew or life_changed or fruit_changed): _refresh()
+		else: _refresh_reproduction_counters()
+		if life_changed and sim!=null:
+			for fighter in sim.fighters:
+				if state.get_plant(str(fighter.id)).get("withered",false): fighter.hp=0.0; fighter.alive=false
+			_update_combat_ui()
 	if sim != null and not paused:
 		sim.update(delta*speed)
 		if not sim.events.is_empty():
@@ -1255,6 +1818,8 @@ func _process(delta: float) -> void:
 			_update_battle_event(sim.events.back())
 			for event in sim.events:
 				var source: String = str(event.get("source",""))
+				if event.get("kind","") == "bloom": _play_sound("bloom")
+				elif event.get("kind","") == "wither": _play_sound("collect_fail")
 				if cells.has(source) and is_instance_valid(cells[source].portrait): cells[source].portrait.activity = 0.55
 				if enemy_cells.has(source) and is_instance_valid(enemy_cells[source].portrait): enemy_cells[source].portrait.activity = 0.55
 		combat_ui_timer += delta
@@ -1280,18 +1845,25 @@ func _open_wilderness() -> void:
 		wilderness.returned_home.connect(_return_from_wilderness)
 		wilderness.encounter_requested.connect(_begin_wild_encounter)
 		wilderness.supplies_requested.connect(_open_field_supplies)
+		wilderness.display_requested.connect(_open_settings)
+		wilderness.sfx_requested.connect(_play_sound)
+		wilderness.position_changed.connect(_field_audio_position)
 		add_child(wilderness)
 		wilderness.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	wilderness.visible = true
 	wilderness.process_mode = Node.PROCESS_MODE_INHERIT
 	wilderness.refresh()
 	wilderness.move_to_front()
+	_field_audio_position()
+	if is_instance_valid(soundscape): soundscape.set_context("wild",wilderness.biome_at(wilderness.player_tile))
 	if not state.expedition.active_encounter.is_empty():
 		wild_encounter_open = true
 		_show_wild_encounter("You return to the same wild organism. Its rhythm is familiar.")
 
 func _return_from_wilderness() -> void:
 	_close_modal()
+	if is_instance_valid(soundscape): soundscape.set_context("garden")
+	_play_sound("back")
 	state.leave_wild_encounter()
 	wild_encounter_open = false
 	exploring = false
@@ -1313,6 +1885,7 @@ func _begin_wild_encounter(biome: String, site_id: String) -> void:
 		wilderness.encounter_closed()
 		return
 	wild_encounter_open = true
+	_play_sound("encounter")
 	_show_wild_encounter(str(result.message))
 
 func _show_wild_encounter(message: String = "") -> void:
@@ -1330,7 +1903,7 @@ func _show_wild_encounter(message: String = "") -> void:
 	stage.add_child(habitat)
 	var art := Portrait.new()
 	art.plant = p
-	art.custom_minimum_size = Vector2(160,190 if small_layout else 255)
+	art.custom_minimum_size = Vector2(160,210 if small_layout else 300)
 	habitat.add_child(art)
 	var bio := VBoxContainer.new()
 	bio.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1338,6 +1911,7 @@ func _show_wild_encounter(message: String = "") -> void:
 	bio.add_child(_wrap(str(p.name),23,INK))
 	bio.add_child(_wrap("%s · %s · G%d" % [p.type,p.rarity,p.generation],13,AMBER))
 	bio.add_child(_wrap("%s pattern · %s tissue\nVitality %d · Growth %d\n%s" % [_gene(p,"pattern"),_gene(p,"texture"),p.stats.vitality,p.stats.growth," / ".join(p.skills)],13))
+	bio.add_child(_action_button("Traits & breeding",func(): _open_dna(str(p.id)),"view_dna",str(p.id)))
 	if not message.is_empty(): bio.add_child(_wrap(message,13,Color("bdcf9b")))
 	modal_content.add_child(_wrap("Study the plant before taking a cutting. A successful collection brings this exact genome home, ready to breed and battle.",13))
 	modal_content.add_child(_wrap("COLLECT  %d%%    /    VINE LURE  %d%%\nA failed cutting uses its kit. After failure there is a 25%% chance the plant withdraws until the next field day." % [roundi(state.capture_odds()*100),roundi(state.capture_odds("entangle")*100)],12,AMBER))
@@ -1370,14 +1944,17 @@ func _wild_action(method: String) -> void:
 		_toast(str(result.get("message","The collection could not be completed.")))
 		return
 	if result.get("caught",false):
+		_play_sound("collect_success")
 		_show_wild_capture(result.plant,str(result.message))
 	elif result.get("fled",false):
+		_play_sound("collect_fail")
 		_close_modal()
 		wild_encounter_open = false
 		wilderness.encounter_closed()
 		wilderness.refresh()
 		_toast(str(result.message))
 	else:
+		_play_sound("observe" if method == "observe" else "collect_fail")
 		_show_wild_encounter(str(result.message))
 	wilderness.refresh()
 
@@ -1388,7 +1965,7 @@ func _show_wild_capture(p: Dictionary, message: String) -> void:
 	var art := Portrait.new()
 	art.plant = p
 	art.reveal = 0
-	art.custom_minimum_size = Vector2(200,230)
+	art.custom_minimum_size = Vector2(200,260)
 	modal_content.add_child(art)
 	var reveal_tween := art.create_tween()
 	reveal_tween.tween_property(art,"reveal",1.0,0.65)
@@ -1426,6 +2003,135 @@ func _open_field_supplies() -> void:
 		_toast(str(result.message))
 		if is_instance_valid(wilderness): wilderness.refresh()
 		_open_field_supplies()))
-	modal_content.add_child(_wrap("18 patches grow across four habitats. Collected and withdrawn patches regrow each field day. Your map position and field notes save automatically.",13))
+	modal_content.add_child(_wrap("A vast wilderness spans eight habitats. Collected and withdrawn patches regrow each field day. Your map position and field notes save automatically.",13))
 	if not state.expedition.active_encounter.is_empty(): modal_content.add_child(_button("Back to the wild plant",func(): _show_wild_encounter()))
 	modal_content.add_child(_button("Back to the trail",_continue_exploring))
+
+
+func _open_display_settings() -> void:
+	_pause_for_preferences()
+	if exploring and is_instance_valid(wilderness):
+		wilderness.waiting = true
+		wild_encounter_open = true
+	_open_modal("Display & resolution", "display_settings")
+	var win: Window = get_window()
+	display_output_label = _wrap(display_settings.description() if display_settings.enabled else "%d × %d pixels" % [win.size.x,win.size.y],18,AMBER)
+	modal_content.add_child(display_output_label)
+	modal_content.add_child(_wrap("The game renders at the full window resolution. Interface scaling keeps text and controls readable on large displays.",14))
+	if display_settings.enabled and DisplayServer.get_screen_count() > 1:
+		var monitors := OptionButton.new()
+		for index in range(DisplayServer.get_screen_count()):
+			var dimensions: Vector2i = DisplayServer.screen_get_size(index)
+			monitors.add_item("Display %d · %d × %d" % [index+1,dimensions.x,dimensions.y])
+		monitors.select(get_window().current_screen)
+		monitors.item_selected.connect(func(index): display_settings.set_screen(index); call_deferred("_refresh_display_readout"))
+		modal_content.add_child(monitors)
+	modal_content.add_child(_button("Large window · 2880 × 2000",func(): _apply_display_preset(Vector2i(2880,2000))))
+	modal_content.add_child(_button("QHD window · 2560 × 1440",func(): _apply_display_preset(Vector2i(2560,1440))))
+	modal_content.add_child(_button("HD window · 1920 × 1080",func(): _apply_display_preset(Vector2i(1920,1080))))
+	modal_content.add_child(_button("Window · 1440 × 1000",func(): _apply_display_preset(Vector2i(1440,1000))))
+	modal_content.add_child(_button("Return to window" if display_settings.is_fullscreen() else "Native-resolution fullscreen",_toggle_fullscreen,Vector2(0,48)))
+	modal_content.add_child(_wrap("F11 switches fullscreen. Window sizes are fitted to your monitor, and display preferences are saved separately from your garden.",13))
+	if exploring: modal_content.add_child(_button("Return to the trail",_continue_exploring))
+
+func _apply_display_preset(dimensions: Vector2i) -> void:
+	display_settings.set_preset(dimensions)
+	call_deferred("_refresh_display_readout")
+
+func _toggle_fullscreen() -> void:
+	display_settings.toggle_fullscreen()
+	call_deferred("_refresh_display_readout")
+
+func _refresh_display_readout() -> void:
+	if is_instance_valid(display_output_label) and display_settings.enabled:
+		display_output_label.text = display_settings.description()
+	_responsive()
+
+func _play_sound(event: String) -> void:
+	if is_instance_valid(soundscape): soundscape.play(event)
+
+func _field_audio_position() -> void:
+	if not is_instance_valid(wilderness) or not is_instance_valid(soundscape): return
+	var biome: String = wilderness.biome_at(wilderness.player_tile)
+	if biome != last_audio_biome:
+		last_audio_biome = biome
+		soundscape.set_context("wild",biome)
+
+func _localize_ui() -> void:
+	Locale.apply_tree(self)
+	if state.save_path == State.SAVE_PATH and DisplayServer.get_name() != "headless":
+		get_window().title = Locale.text("The Quiet Conservatory")
+
+func _change_language(code: String) -> void:
+	Locale.set_language(code)
+	if state.save_path == State.SAVE_PATH: Locale.save_settings()
+	else: Locale.save_settings(state.save_path.get_basename()+".language.cfg")
+	_play_sound("ui")
+	_localize_ui()
+	_responsive()
+	call_deferred("_localize_ui")
+
+func _pause_for_preferences() -> void:
+	if sim != null and not paused:
+		preferences_paused_battle = true
+		paused = true
+
+func _open_settings() -> void:
+	_pause_for_preferences()
+	if exploring and is_instance_valid(wilderness):
+		wilderness.waiting = true
+		wild_encounter_open = true
+	_open_modal("Sound & language","settings")
+	modal_content.add_child(_wrap("Choose your language and the sounds of your garden. Changes are saved automatically.",14))
+	modal_content.add_child(_label("Language",13,AMBER))
+	language_picker = OptionButton.new()
+	language_picker.add_item("English")
+	language_picker.set_item_metadata(0,"en")
+	language_picker.add_item("简体中文")
+	language_picker.set_item_metadata(1,"zh_CN")
+	language_picker.select(1 if Locale.get_language() == "zh_CN" else 0)
+	language_picker.item_selected.connect(func(index): _change_language(str(language_picker.get_item_metadata(index))))
+	modal_content.add_child(language_picker)
+	_line(modal_content)
+	for channel in ["master","music","ambience","effects"]:
+		var title: String = {"master":"Master volume","music":"Music","ambience":"Ambience","effects":"Sound effects"}[channel]
+		modal_content.add_child(_label(title,13,AMBER))
+		var row := HBoxContainer.new()
+		modal_content.add_child(row)
+		var slider := HSlider.new()
+		slider.set_meta("sound_channel",channel)
+		slider.min_value = 0
+		slider.max_value = 100
+		slider.step = 1
+		slider.value = roundi(soundscape.get_volume(channel)*100) if is_instance_valid(soundscape) else 65
+		slider.custom_minimum_size = Vector2(120,26)
+		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(slider)
+		var amount := _label("%d%%" % int(slider.value),13,INK)
+		amount.custom_minimum_size.x = 44
+		row.add_child(amount)
+		slider.value_changed.connect(func(value):
+			if is_instance_valid(soundscape): soundscape.set_volume(channel,value/100.0)
+			amount.text = "%d%%" % int(value))
+	var mute := CheckButton.new()
+	mute.text = "Mute all sound"
+	mute.button_pressed = soundscape.is_muted() if is_instance_valid(soundscape) else false
+	mute.toggled.connect(func(value):
+		if is_instance_valid(soundscape): soundscape.set_muted(value)
+		if not value: _play_sound("ui"))
+	modal_content.add_child(mute)
+	_line(modal_content)
+	modal_content.add_child(_button("Display & resolution",_open_display_settings))
+	modal_content.add_child(_wrap("Music changes as you explore and battle. Field footsteps, plant discoveries, breeding and blooms each have their own sound.",13))
+	if exploring: modal_content.add_child(_button("Return to the trail",_continue_exploring))
+	call_deferred("_localize_ui")
+
+func _history_note(record: Dictionary, kind: String) -> String:
+	var generation: int = int(record.get("generation",1))
+	if kind == "graft":
+		return "G%d · %s graft from %s · %s" % [generation,str(record.get("trait","feature")),str(record.get("donor_name","Unknown donor")),str(record.get("value",""))]
+	if kind == "rejected":
+		return "G%d · Graft from %s rejected" % [generation,str(record.get("donor_name","Unknown donor"))]
+	if str(record.get("outcome","")) == "No change":
+		return "G%d · %s · No change" % [generation,str(record.get("agent","Mutation"))]
+	return "G%d · %s · %s: %s → %s" % [generation,str(record.get("agent","Mutation")),str(record.get("slot","trait")),str(record.get("before","")),str(record.get("after",""))]

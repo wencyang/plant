@@ -6,14 +6,14 @@ config/name="The Quiet Conservatory"
 config/icon="res://icon.svg"
 run/main_scene="res://scenes/garden.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
-config/description="A pixel botanical adventure. Explore four biomes, collect wild plants, and grow a lineage."
+config/description="A pixel botanical adventure. Explore eight biomes, collect wild plants, and grow a lineage. English and Chinese, with original music and sound."
 
 [display]
 window/dpi/allow_hidpi=true
 window/size/viewport_width=1440
 window/size/viewport_height=1000
-window/size/window_width_override=1440
-window/size/window_height_override=1000
+window/size/window_width_override=2880
+window/size/window_height_override=2000
 window/size/min_width=390
 window/size/min_height=780
 window/stretch/mode="disabled"

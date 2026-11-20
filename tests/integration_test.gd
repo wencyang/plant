@@ -96,6 +96,29 @@ func run() -> void:
 	check_modal_bounds("Desktop crossbreeding")
 	game._crossbreed()
 	await process_frame
+	check(game.state.plants.size() == 5, "Pollination keeps embryos in fruit rather than creating an owned plant immediately")
+	check(game.state.pollinations.has(str(selected_parents[0])), "Crossbreeding starts a fruit on the selected mother")
+	if not game.state.pollinations.has(str(selected_parents[0])):
+		quit(1)
+		return
+	game.state.pollinations[str(selected_parents[0])].ready_at = 0
+	game._open_seeds()
+	await settle_layout()
+	game._harvest_fruit(str(selected_parents[0]))
+	await settle_layout()
+	var crossed_fruit: Dictionary = {}
+	for fruit: Dictionary in game.state.fruit_inventory:
+		if fruit.kind == "hybrid" and str(fruit.mother_id) == str(selected_parents[0]): crossed_fruit = fruit
+	check(not crossed_fruit.is_empty(), "Ripe cross fruit is harvested into the fruit inventory")
+	if crossed_fruit.is_empty():
+		quit(1)
+		return
+	var hybrid_seed_index: int = game.state.seed_bank.size()
+	game._extract_fruit(str(crossed_fruit.id))
+	await settle_layout()
+	check(game.state.seed_bank.size() == hybrid_seed_index+2, "Harvested hybrid fruit provides two independent full-genome seeds")
+	game._plant_saved_seed(hybrid_seed_index)
+	await settle_layout()
 	check(game.state.plants.size() == 6, "Crossbreed creates individual")
 	check(game.modal_kind == "reveal", "Offspring reveal")
 	var child_id: String = str(game.state.plant_order.back())
