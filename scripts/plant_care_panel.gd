@@ -69,11 +69,12 @@ static func status_text(status: Dictionary) -> String:
 
 static func show(g: Control,id: String = "",feedback: String = "") -> void:
 	if g.exploring: g._return_from_wilderness()
-	var chosen: String = id if g.state.plants.has(id) else str(g.selected_id)
-	if not g.state.plants.has(chosen):
+	var chosen: String = id if g._owns_plant(id) else str(g.selected_id)
+	if not g._owns_plant(chosen):
+		chosen = ""
 		for candidate in g.state.plant_order:
 			if not g.state.get_plant(str(candidate)).get("withered",false): chosen=str(candidate); break
-	if not g.state.plants.has(chosen) and not g.state.plant_order.is_empty(): chosen=str(g.state.plant_order[0])
+	if not g._owns_plant(chosen) and not g.state.plant_order.is_empty(): chosen=str(g.state.plant_order[0])
 	g._open_modal("The happy little tool shed","care")
 	g.modal.set_meta("care_plant_id",chosen)
 	if chosen.is_empty():

@@ -89,7 +89,7 @@ static func _trait_card(g: Control,parent: Node,p: Dictionary,trait_info: Dictio
 static func show_traits(g: Control,id: String) -> void:
 	var p: Dictionary = g._inspection_plant(id)
 	if p.is_empty(): return
-	var owned: bool = g.state.plants.has(id)
+	var owned: bool = g._owns_plant(id)
 	g._open_modal(("Traits · %s" if g.small_layout else "Traits & breeding · %s") % str(p.name),"dna")
 	g.modal.set_meta("dna_plant_id",id)
 	g.modal_content.add_child(g._wrap("Traits you can breed for" if g.small_layout else "Read the plant. Plan its next generation.",17 if g.small_layout else 19,AMBER))
@@ -359,10 +359,11 @@ static func show_cross(g: Control,id: String,mate_id: String = "",goal_key: Stri
 	var use: Button = g._action_button("Use this pair in the laboratory",func(): g._use_dna_pair(id,mate_id),"dna_use_pair",id)
 	use.set_meta("parent_a",id)
 	use.set_meta("parent_b",mate_id)
-	use.disabled = not g.state.plants.has(id) or not p.get("mature",false) or p.get("withered",false) or g.sim!=null
+	use.disabled = not g._owns_plant(id) or not p.get("mature",false) or p.get("withered",false) or g.sim!=null
 	g.reproduction_buttons.append(use)
 	footer.add_child(use)
 	if p.get("withered",false): footer.add_child(g._wrap("This is an archived plant. Grow its stored seeds to continue these traits in a living parent.",11,MUTED))
-	elif not g.state.plants.has(id): footer.add_child(g._wrap("Collect this plant, or sow and raise this seed, before using the pair.",11,MUTED))
+	elif p.get("sold",false): footer.add_child(g._wrap("This plant has a new home. Its family history stays in your archive.",11,MUTED))
+	elif not g._owns_plant(id): footer.add_child(g._wrap("Collect this plant, or sow and raise this seed, before using the pair.",11,MUTED))
 	elif not p.get("mature",false): footer.add_child(g._wrap("This seedling must mature before it can become a parent.",11,MUTED))
 	footer.add_child(g._button("Back to traits",func(): g._open_dna(id)))

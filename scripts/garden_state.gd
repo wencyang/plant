@@ -1,6 +1,7 @@
 extends RefCounted
 class_name GardenState
 const Care = preload("res://scripts/plant_care.gd")
+const Market = preload("res://scripts/market_rules.gd")
 
 ## All organisms, including retired donors and every ancestor, remain in this archive.
 ## Visuals are derived from diploid genes and seed; no baked appearance is saved.
@@ -45,6 +46,7 @@ var plants: Dictionary = {}
 var bed: Array = []
 var display_bed: Array = []
 var resources: Dictionary = {"sunlight": 180, "agents": 3, "grafts": 3}
+var market: Dictionary = Market.default_market()
 var seed_bank: Array = []
 var fruit_inventory: Array = []
 var fruit_crops: Dictionary = {}
@@ -83,6 +85,7 @@ func new_game() -> void:
 	_ready_reproduction.clear()
 	reproduction_counter = 0
 	resources = {"sunlight": 180, "agents": 3, "grafts": 3}
+	market = Market.default_market()
 	field_kits = 12
 	expedition = _default_expedition()
 	bed = ["", "", "", "", "", "", "", "", ""]
@@ -112,6 +115,156 @@ func new_game() -> void:
 func get_plant(id: String) -> Dictionary:
 	return plants.get(id, {})
 
+func owns_plant(id: String) -> bool:
+	return plants.has(id) and plant_order.has(id) and not bool(plants[id].get("sold",false))
+
+func market_wallet() -> int:
+	return int(market.coins)
+
+func market_day(day_override: int = -1) -> Dictionary:
+	return Market.day(day_override)
+
+func market_stock() -> Array:
+	return Market.stock()
+
+func market_history() -> Array:
+	return market.history.duplicate(true)
+
+func market_ref(kind: String,index_or_id: Variant) -> Variant:
+	if kind in ["plant","fruit"]: return str(index_or_id)
+	if kind!="seed" or not (index_or_id is int or index_or_id is float): return {}
+	var index: int = int(index_or_id)
+	if index<0 or index>=seed_bank.size(): return {}
+	var fingerprint: String = Market.fingerprint(seed_bank[index])
+	var occurrence: int = 0
+	for earlier in range(index):
+		if Market.fingerprint(seed_bank[earlier])==fingerprint: occurrence+=1
+	return {"fingerprint":fingerprint,"occurrence":occurrence}
+
+func _market_resolve(kind: String,reference: Variant) -> Dictionary:
+	if kind=="plant" and reference is String and owns_plant(reference): return {"item":plants[reference],"index":plant_order.find(reference)}
+	if kind=="fruit" and reference is String:
+		for index in range(fruit_inventory.size()):
+			if str(fruit_inventory[index].id)==reference: return {"item":fruit_inventory[index],"index":index}
+	if kind=="seed" and reference is Dictionary and reference.get("fingerprint") is String and Market._whole(reference.get("occurrence")):
+		var occurrence: int = 0
+		for index in range(seed_bank.size()):
+			if Market.fingerprint(seed_bank[index])!=reference.fingerprint: continue
+			if occurrence==int(reference.occurrence): return {"item":seed_bank[index],"index":index}
+			occurrence+=1
+	return {}
+
+func market_inventory(kind: String) -> Array:
+	var rows: Array = []
+	var occurrences: Dictionary = {}
+	var items: Array = []
+	if kind=="plant":
+		for id: String in plant_order:
+			if owns_plant(id): items.append(plants[id])
+	elif kind=="fruit": items=fruit_inventory
+	elif kind=="seed": items=seed_bank
+	for index in range(items.size()):
+		var item: Dictionary = items[index]
+		var reference: Variant = str(item.get("id",""))
+		if kind=="seed":
+			var fingerprint: String = Market.fingerprint(item)
+			reference={"fingerprint":fingerprint,"occurrence":int(occurrences.get(fingerprint,0))}
+			occurrences[fingerprint]=int(reference.occurrence)+1
+		var quote: Dictionary = _market_quote_resolved(kind,reference,item)
+		var row: Dictionary = {"reference":reference,"name":quote.name,"quote":quote}
+		row[kind]=item.duplicate(true)
+		rows.append(row)
+	return rows
+
+func market_quote(kind: String,reference: Variant) -> Dictionary:
+	var resolved: Dictionary = _market_resolve(kind,reference)
+	if resolved.is_empty():
+		return {"ok":false,"eligible":false,"key":"","name":"Unavailable item","price":0,"breakdown":[],"reason":"This item is no longer in your inventory. Choose it again.","quote_id":"","factors":{},"notes":[]}
+	return _market_quote_resolved(kind,reference,resolved.item)
+
+func _market_quote_resolved(kind: String,reference: Variant,item: Dictionary) -> Dictionary:
+	var today: Dictionary = market_day()
+	var count: int = int(market.sold_by_day.get(today.key,{}).get(kind,0))
+	var quote: Dictionary = Market.price(kind,item,today,count)
+	quote["ok"]=true
+	quote["eligible"]=true
+	quote["name"]=str(item.get("name","Hybrid fruit" if item.get("kind","")=="hybrid" else "Natural fruit"))
+	quote["key"]=str(item.get("id","")) if kind!="seed" else str(reference.fingerprint)
+	quote["reason"]="Ready to sell."
+	if kind=="plant":
+		if bool(item.get("favorite",false)): quote.eligible=false; quote.reason="Favorites are protected. Unlock this plant before selling it."
+		elif pollinations.has(item.id): quote.eligible=false; quote.reason="Harvest this plant's hybrid fruit before selling it."
+		elif bool(fruit_status(str(item.id)).natural_ready): quote.eligible=false; quote.reason="Harvest this plant's ripe natural fruit before selling it."
+		elif fruit_crops.has(item.id): quote.notes.append("Unripe natural fruit travels with the sold plant.")
+		quote.notes.append("The plant leaves your garden. Its DNA and family tree remain in the archive.")
+	elif kind=="fruit": quote.notes.append("Selling this fruit also sells every seed inside it.")
+	# Only price-relevant condition changes invalidate a review. Active lifetime
+	# ticks do not invalidate it every frame while the player reads the offer.
+	var identity: Variant = item if kind=="fruit" else reference
+	if kind=="plant":
+		identity={"id":item.id,"name":item.name,"genes":item.genes,"stats":item.stats,"rarity":item.rarity,"care":item.get("care",{}).duplicate(true),"mature":item.mature,"lineage_mix":item.get("lineage_mix",{})}
+		identity.care.erase("cooldowns")
+		identity.care.erase("last_cared_at")
+	quote["quote_id"]=Market.fingerprint({"kind":kind,"identity":identity,"reference":reference,"day":today.day,"sold":count,"price":quote.price,"breakdown":quote.breakdown,"eligible":quote.eligible,"reason":quote.reason,"notes":quote.notes})
+	return quote
+
+func _market_record(action: String,kind: String,key: String,item_name: String,price: int) -> void:
+	market.sequence=int(market.sequence)+1
+	market.history.push_front({"sequence":int(market.sequence),"at":int(Time.get_unix_time_from_system()),"action":action,"kind":kind,"key":key,"name":item_name,"price":price,"coins":int(market.coins)})
+	if market.history.size()>60: market.history.resize(60)
+	var oldest: int = int(market_day().day)-14
+	for day_key: Variant in market.sold_by_day.keys():
+		if int(day_key)<oldest: market.sold_by_day.erase(day_key)
+
+func market_sell(kind: String,reference: Variant,expected_quote_id: String = "") -> Dictionary:
+	var resolved: Dictionary = _market_resolve(kind,reference)
+	if resolved.is_empty(): return _failure("This item is no longer in your inventory. Choose it again.")
+	var quote: Dictionary = _market_quote_resolved(kind,reference,resolved.item)
+	if not bool(quote.eligible): return _failure(str(quote.reason))
+	if not expected_quote_id.is_empty() and expected_quote_id!=str(quote.quote_id): return _failure("The offer changed. Review the updated price before selling.")
+	if kind=="plant":
+		var id: String = str(reference)
+		plants[id]["sold"]=true
+		plants[id]["retired"]=true
+		plants[id]["sold_at"]=int(Time.get_unix_time_from_system())
+		plant_order.erase(id)
+		for index in range(bed.size()):
+			if str(bed[index])==id: bed[index]=""
+		for index in range(display_bed.size()):
+			if str(display_bed[index])==id: display_bed[index]=""
+		fruit_crops.erase(id)
+	elif kind=="fruit": fruit_inventory.remove_at(int(resolved.index))
+	elif kind=="seed": seed_bank.remove_at(int(resolved.index))
+	var day_key: String = str(market_day().key)
+	if not market.sold_by_day.has(day_key): market.sold_by_day[day_key]={}
+	market.sold_by_day[day_key][kind]=int(market.sold_by_day[day_key].get(kind,0))+1
+	market.coins=int(market.coins)+int(quote.price)
+	_market_record("sell",kind,str(quote.key),str(quote.name),int(quote.price))
+	save_game()
+	return {"ok":true,"message":"Sold %s for %d coins." % [quote.name,int(quote.price)],"price":int(quote.price),"coins":int(market.coins),"quote":quote}
+
+func market_buy(stock_key: String) -> Dictionary:
+	var offer: Dictionary = {}
+	for row: Dictionary in market_stock():
+		if str(row.key)==stock_key: offer=row; break
+	if offer.is_empty(): return _failure("Choose an item from the market shop.")
+	var cost: int = int(offer.cost)
+	if int(market.coins)<cost: return _failure("You need %d coins for this purchase." % cost)
+	# Affordability is checked before all RNG, ID and inventory changes.
+	var purchased: Dictionary = {}
+	match stock_key:
+		"sunlight": resources.sunlight+=int(offer.amount)
+		"field_kits": field_kits+=int(offer.amount)
+		"graft_material": resources.grafts+=int(offer.amount)
+		"mutation_agent": resources.agents+=int(offer.amount)
+		"founding_seed":
+			purchased=_make_seed(random.randi_range(0,SPECIES.size()-1),"Common")
+			seed_bank.append(purchased)
+	market.coins=int(market.coins)-cost
+	_market_record("buy","stock",stock_key,str(offer.name),cost)
+	save_game()
+	return {"ok":true,"message":"Bought %s for %d coins." % [offer.name,cost],"cost":cost,"coins":int(market.coins),"seed":purchased}
+
 func care_tools() -> Array:
 	return Care.tools()
 
@@ -124,6 +277,7 @@ func care_status(id: String,tool_key: String) -> Dictionary:
 	if definition.is_empty(): return result
 	var plant: Dictionary = get_plant(id)
 	if plant.is_empty(): result.reason="Choose a plant to care for."; return result
+	if not owns_plant(id): result.reason="This plant has been sold. Its family record remains in the archive."; return result
 	var care: Dictionary = plant.get("care",Care.default_care())
 	var count: int = int(care.get("uses",{}).get(tool_key,0))
 	var now: int = int(Time.get_unix_time_from_system())
@@ -295,6 +449,7 @@ func _combined_lineage(a: Dictionary,b: Dictionary) -> Dictionary:
 	return result
 
 func crossbreed(id_a: String, id_b: String) -> Dictionary:
+	if not owns_plant(id_a) or not owns_plant(id_b): return _failure("Choose two plants that belong to your garden.")
 	var a: Dictionary = get_plant(id_a)
 	var b: Dictionary = get_plant(id_b)
 	if a.is_empty() or b.is_empty():
@@ -386,7 +541,7 @@ func _make_offspring(a: Dictionary, b: Dictionary, child_seed: int, child_id: St
 	return p
 
 func _ensure_natural_crop(id: String, now: int = -1) -> bool:
-	if not plants.has(id) or not bool(plants[id].get("mature",false)) or bool(plants[id].get("withered",false)) or fruit_crops.has(id): return false
+	if not owns_plant(id) or not bool(plants[id].get("mature",false)) or bool(plants[id].get("withered",false)) or fruit_crops.has(id): return false
 	if now < 0: now = int(Time.get_unix_time_from_system())
 	fruit_crops[id] = {"natural_ready_at":now+NATURAL_FRUIT_SECONDS}
 	return true
@@ -486,6 +641,7 @@ func _genome_seed(embryo: Dictionary,kind: String,parent_names: Array) -> Dictio
 	return JSON.parse_string(JSON.stringify(snapshot))
 
 func pollinate(id_a: String,id_b: String) -> Dictionary:
+	if not owns_plant(id_a) or not owns_plant(id_b): return _failure("Choose two plants that belong to your garden.")
 	var a: Dictionary = get_plant(id_a)
 	var b: Dictionary = get_plant(id_b)
 	if a.is_empty() or b.is_empty(): return _failure("Choose two mature parents.")
@@ -512,7 +668,7 @@ func pollinate(id_a: String,id_b: String) -> Dictionary:
 		"message":"Pollination recorded. A hybrid fruit will ripen in 18 seconds, holding two seeds. Both parents remain."}
 
 func _harvest_fruit(plant_id: String,save_after: bool) -> Dictionary:
-	if not plants.has(plant_id): return _failure("Choose a plant to harvest.")
+	if not owns_plant(plant_id): return _failure("Choose a plant in your garden to harvest.")
 	var parent: Dictionary = plants[plant_id]
 	var status: Dictionary = fruit_status(plant_id)
 	var harvested: Array = []
@@ -586,6 +742,7 @@ func extract_all_seeds() -> Dictionary:
 	return {"ok":true,"seeds":seeds,"message":"Collected %d seeds. Their full genomes and parentage are preserved for planting." % seeds.size()}
 
 func graft(host_id: String, donor_id: String, trait_name: String = "feature") -> Dictionary:
+	if not owns_plant(host_id) or not owns_plant(donor_id): return _failure("Choose a host and donor that belong to your garden.")
 	var host: Dictionary = get_plant(host_id)
 	var donor: Dictionary = get_plant(donor_id)
 	if host.is_empty() or donor.is_empty() or host_id == donor_id:
@@ -644,6 +801,7 @@ func graft_odds(host_id: String, donor_id: String) -> float:
 	return (0.9 if (a.type == b.type or a.type == b.secondary_type or a.secondary_type == b.type) else 0.65) - float(a.graft_history.size()) * 0.05
 
 func mutate(id: String, agent: String = "radiation", slot: String = "pattern") -> Dictionary:
+	if not owns_plant(id): return _failure("This plant no longer belongs to your garden.")
 	var p: Dictionary = get_plant(id)
 	if p.is_empty():
 		return _failure("Choose a plant to expose.")
@@ -725,20 +883,43 @@ func _new_trait_value(slot: String, previous: Variant) -> Variant:
 	pool.erase(previous)
 	return pool[random.randi_range(0, pool.size() - 1)]
 
-func plant_seed(index: int) -> Dictionary:
+func plant_seed_at(reference: Variant,cell: int) -> Dictionary:
+	if cell<0 or cell>=bed.size(): return _failure("Choose an empty garden plot to plant this seed.")
+	if not str(bed[cell]).is_empty(): return _failure("This plot is occupied. Choose an empty garden plot.")
+	var resolved: Dictionary = _market_resolve("seed",reference)
+	if resolved.is_empty(): return _failure("This seed is no longer in your seed bank. Choose another seed.")
+	return plant_seed(int(resolved.index),cell)
+
+func _valid_planting_seed(snapshot: Dictionary) -> bool:
+	if snapshot.has("genome"): return _valid_genome(snapshot.genome,plants)
+	if snapshot.has("species_index") and (not Market._whole(snapshot.species_index) or int(snapshot.species_index)>=SPECIES.size()): return false
+	if snapshot.has("seed") and not Market._whole(snapshot.seed): return false
+	if snapshot.has("rarity") and not snapshot.rarity in RARITIES: return false
+	if snapshot.has("pattern") and not snapshot.pattern in PATTERNS: return false
+	if snapshot.has("parents"):
+		if not snapshot.parents is Array: return false
+		for parent_id: Variant in snapshot.parents:
+			if not parent_id is String or not plants.has(parent_id): return false
+	return true
+
+func plant_seed(index: int,target_cell: int = -1) -> Dictionary:
 	if index < 0 or index >= seed_bank.size():
 		return _failure("Choose a seed from the bank.")
+	if target_cell < -1 or target_cell>=bed.size(): return _failure("Choose an empty garden plot to plant this seed.")
+	if target_cell>=0 and not str(bed[target_cell]).is_empty(): return _failure("This plot is occupied. Choose an empty garden plot.")
 	if int(resources.sunlight) < 10:
 		return _failure("Planting a seed needs 10 gathered light.")
 	var snapshot: Dictionary = seed_bank[index]
+	if not _valid_planting_seed(snapshot): return _failure("This seed's genome is incomplete. Its parentage has been kept in the archive.")
 	var p: Dictionary
 	if snapshot.has("genome"):
-		if not _valid_genome(snapshot.genome,plants): return _failure("This seed's genome is incomplete. Its parentage has been kept in the archive.")
 		p = snapshot.genome.duplicate(true)
 		p.id = _new_id()
 		p["life_age"] = 0.0
 		p["withered"] = false
 		p["retired"] = false
+		p.erase("sold")
+		p.erase("sold_at")
 		p["origin"] = {"kind":"seed","seed_id":snapshot.get("id",""),"fruit_kind":snapshot.get("kind","lineage")}
 	else:
 		# Earlier archives and external rewards carry tendencies rather than a
@@ -770,12 +951,13 @@ func plant_seed(index: int) -> Dictionary:
 	resources.sunlight -= 10
 	seed_bank.remove_at(index)
 	_add_plant(p)
-	for cell in range(bed.size()):
-		if str(bed[cell]).is_empty():
-			bed[cell] = p.id
-			break
+	var planted_cell: int = target_cell
+	if planted_cell<0:
+		for cell in range(bed.size()):
+			if str(bed[cell]).is_empty(): planted_cell=cell; break
+	if planted_cell>=0: bed[planted_cell]=p.id
 	save_game()
-	return {"ok": true, "message": "%s has taken root. It will mature in 12 seconds." % p.name, "plant": p}
+	return {"ok": true, "message": "%s has taken root. It will mature in 12 seconds." % p.name, "plant": p,"plant_id":str(p.id),"bed_index":planted_cell}
 
 func display_score() -> Dictionary:
 	var types_seen: Dictionary = {}
@@ -977,12 +1159,12 @@ func _make_seed(species_index: int, rarity: String) -> Dictionary:
 	return {"species_index": species_index, "species": s.name, "type": s.type, "rarity": rarity, "pattern": PATTERNS[random.randi_range(0, PATTERNS.size() - 1)], "seed": random.randi(), "name": "%s seed" % s.name}
 
 func rename_plant(id: String, new_name: String) -> void:
-	if plants.has(id) and not new_name.strip_edges().is_empty():
+	if owns_plant(id) and not new_name.strip_edges().is_empty():
 		plants[id].name = new_name.strip_edges().left(28)
 		save_game()
 
 func toggle_favorite(id: String) -> void:
-	if plants.has(id):
+	if owns_plant(id):
 		plants[id].favorite = not plants[id].favorite
 		save_game()
 
@@ -1000,6 +1182,7 @@ func tick_growth() -> bool:
 	return changed
 
 func mature_plant(id: String) -> Dictionary:
+	if not owns_plant(id): return _failure("This plant no longer belongs to your garden.")
 	var p: Dictionary = get_plant(id)
 	if p.is_empty():
 		return _failure("Choose a growing plant.")
@@ -1016,7 +1199,7 @@ func mature_plant(id: String) -> Dictionary:
 	return {"ok": true, "message": "%s has unfurled." % p.name, "plant": p}
 
 func place_in_bed(id: String, index: int) -> bool:
-	if index < 0 or index >= 9 or not plants.has(id):
+	if index < 0 or index >= 9 or not owns_plant(id):
 		return false
 	if not bool(plants[id].mature) or bool(plants[id].get("withered",false)):
 		return false
@@ -1029,7 +1212,7 @@ func place_in_bed(id: String, index: int) -> bool:
 	return true
 
 func place_in_display(id: String, index: int) -> bool:
-	if index < 0 or index >= 6 or not plants.has(id) or not plants[id].mature or bool(plants[id].get("withered",false)):
+	if index < 0 or index >= 6 or not owns_plant(id) or not plants[id].mature or bool(plants[id].get("withered",false)):
 		return false
 	var old_index: int = display_bed.find(id)
 	var displaced: String = str(display_bed[index])
@@ -1093,7 +1276,7 @@ func lineage(id: String, depth: int = 3) -> Dictionary:
 		for parent_id: String in p.parents:
 			if plants.has(parent_id):
 				ancestors.append(_ancestor_branch(parent_id, depth - 1))
-		for other_id: String in plant_order:
+		for other_id: String in plants:
 			if plants[other_id].parents.has(id):
 				descendants.append(_descendant_branch(other_id, depth - 1))
 	return {"plant": p, "ancestors": ancestors, "descendants": descendants}
@@ -1111,7 +1294,7 @@ func _descendant_branch(id: String, remaining: int) -> Dictionary:
 	var p: Dictionary = plants[id]
 	var children: Array = []
 	if remaining > 0:
-		for other_id: String in plant_order:
+		for other_id: String in plants:
 			if plants[other_id].parents.has(id):
 				children.append(_descendant_branch(other_id, remaining - 1))
 	return {"id": id, "name": p.name, "generation": p.generation, "children": children}
@@ -1393,7 +1576,7 @@ func field_status() -> Dictionary:
 func save_game() -> void:
 	var payload: Dictionary = {
 		"version": SAVE_VERSION, "plants": plants, "bed": bed,
-		"display_bed": display_bed, "resources": resources,
+		"display_bed": display_bed, "resources": resources, "market":market,
 		"seed_bank": seed_bank, "wins": wins, "battles": battles,
 		"fruit_inventory":fruit_inventory,"fruit_crops":fruit_crops,"pollinations":pollinations,"reproduction_counter":reproduction_counter,
 		"discovered": discovered, "claimed": claimed, "plant_order": plant_order,
@@ -1427,6 +1610,7 @@ func load_game() -> bool:
 	bed = payload.bed
 	display_bed = payload.display_bed
 	resources = payload.resources
+	market = payload.get("market",Market.default_market())
 	seed_bank = payload.seed_bank
 	wins = int(payload.get("wins", 0))
 	battles = int(payload.get("battles", 0))
@@ -1483,6 +1667,7 @@ func _valid_save(value: Variant) -> bool:
 		return false
 	if not data.get("plants", null) is Dictionary or not data.get("resources", null) is Dictionary:
 		return false
+	if data.has("market") and not Market.valid_market(data.market): return false
 	if not data.get("bed", null) is Array or data.bed.size() != 9:
 		return false
 	if not data.get("display_bed", null) is Array or data.display_bed.size() != 6:
@@ -1494,6 +1679,8 @@ func _valid_save(value: Variant) -> bool:
 	for entry: Variant in data.plant_order:
 		if not entry is String or not data.plants.has(entry):
 			return false
+		if not data.plants[entry] is Dictionary: return false
+		if bool(data.plants[entry].get("sold",false)): return false
 	if data.has("field_kits") and not (data.field_kits is float or data.field_kits is int):
 		return false
 	if data.has("expedition") and not _valid_expedition(data.expedition):
@@ -1537,6 +1724,9 @@ func _valid_save(value: Variant) -> bool:
 		if p.has("inherited_graft_records") and (not p.inherited_graft_records is Array or p.inherited_graft_records.size()>2): return false
 		if p.has("life_age") and (not _number(p.life_age) or float(p.life_age)<0): return false
 		if p.has("withered") and not p.withered is bool: return false
+		if p.has("sold") and not p.sold is bool: return false
+		if p.has("sold_at") and not Market._whole(p.sold_at): return false
+		if bool(p.get("sold",false)) and not bool(p.get("retired",false)): return false
 		if p.has("measurements") and not Care.valid_measurements(p.measurements): return false
 		if p.has("care") and not Care.valid_care(p.care): return false
 		if p.has("gene_sources") and not _valid_gene_sources(p.gene_sources): return false
@@ -1549,12 +1739,14 @@ func _valid_save(value: Variant) -> bool:
 		for id: Variant in data.fruit_crops:
 			var crop: Variant = data.fruit_crops[id]
 			if not id is String or not data.plants.has(id) or not crop is Dictionary or not _number(crop.get("natural_ready_at",null)): return false
+			if bool(data.plants[id].get("sold",false)): return false
 	var fruit_ids: Dictionary = {}
 	if data.has("pollinations"):
 		if not data.pollinations is Dictionary: return false
 		for id: Variant in data.pollinations:
 			var batch: Variant = data.pollinations[id]
 			if not id is String or not data.plants.has(id) or not _valid_fruit(batch,data.plants): return false
+			if bool(data.plants[id].get("sold",false)): return false
 			if str(batch.mother_id)!=id or batch.kind!="hybrid" or not _number(batch.get("ready_at",null)): return false
 			if fruit_ids.has(batch.id): return false
 			fruit_ids[batch.id] = true
@@ -1569,6 +1761,7 @@ func _valid_save(value: Variant) -> bool:
 			return false
 		if not entry.is_empty() and not data.plants.has(entry):
 			return false
+		if not entry.is_empty() and bool(data.plants[entry].get("sold",false)): return false
 	return true
 
 func _number(value: Variant) -> bool:

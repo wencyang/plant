@@ -13,6 +13,8 @@ const GeneticsUI = preload("res://scripts/genetics_panel.gd")
 const Guide = preload("res://scripts/genetics_guide.gd")
 const CareUI = preload("res://scripts/plant_care_panel.gd")
 const CareSpark = preload("res://scripts/care_tool_icon.gd")
+const MarketUI = preload("res://scripts/market_panel.gd")
+const PlantingUI = preload("res://scripts/planting_panel.gd")
 const INK := Color("284838")
 const MUTED := Color("617957")
 const AMBER := Color("a4542b")
@@ -108,6 +110,16 @@ var life_save_timer: float = 0.0
 var care_button: Button
 var care_buttons: Array[Button] = []
 var care_labels: Array[Label] = []
+var market_button: Button
+var market_tab: String = "plants"
+var market_page: int = 0
+var market_buttons: Array[Button] = []
+var market_labels: Array[Label] = []
+var plant_button: Button
+var planting_page: int = 0
+var planting_buttons: Array[Button] = []
+var planting_labels: Array[Label] = []
+var tagline_label: Label
 
 func _ready() -> void:
 	if state.save_path == State.SAVE_PATH and DisplayServer.get_name() != "headless": Locale.load_settings()
@@ -264,10 +276,11 @@ func _build_ui() -> void:
 	var titles := VBoxContainer.new()
 	titles.add_theme_constant_override("separation", 3)
 	title_row.add_child(titles)
-	titles.add_child(_label("A LITTLE SUNSHINE. A LOT OF POSSIBILITIES.", 10, MUTED))
+	tagline_label = _label("A LITTLE SUNSHINE. A LOT OF POSSIBILITIES.",10,MUTED)
+	titles.add_child(tagline_label)
 	heading = _label("Quiet Conservatory", 36, INK, true)
 	titles.add_child(heading)
-	helper_label = _label("Grow a giant. Find a wild friend. Mix two plants and see what sprouts!", 13, MUTED)
+	helper_label = _label("Tap an empty plot to plant a seed. Tap a plant to care for it.", 13, MUTED)
 	titles.add_child(helper_label)
 	_spacer(title_row)
 	var score_box := VBoxContainer.new()
@@ -305,6 +318,12 @@ func _build_ui() -> void:
 	_spacer(bed_header)
 	synergy_label = _label("", 11, MUTED)
 	bed_header.add_child(synergy_label)
+	plant_button = _button("Plant a seed",func(): planting_page=0; _open_planting(),Vector2(100,28))
+	plant_button.set_meta("planting_action","open")
+	plant_button.add_theme_font_size_override("font_size",12)
+	plant_button.add_theme_stylebox_override("normal",_style(Color("ffbe8e"),Color("c9874e"),0,10,3))
+	plant_button.add_theme_stylebox_override("hover",_style(Color("ffd7a4"),Color("c9874e"),0,10,3))
+	bed_header.add_child(plant_button)
 	var board_panel := PanelContainer.new()
 	board_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	board_panel.add_theme_stylebox_override("panel", _style(Color(0.09,0.14,0.115,0.9), Color("4a5c43"), 12, 13, 12))
@@ -397,7 +416,10 @@ func _build_ui() -> void:
 	care_button.set_meta("reproduction_action","open_care")
 	care_button.add_theme_stylebox_override("normal",_style(Color("ffe58d"),Color("cba355"),0,14,12))
 	footer_row.add_child(care_button)
-	footer_row.add_child(_button("Codex", _open_codex, Vector2(100, 48)))
+	market_button = _button("Market",func(): market_page=0; _open_market(),Vector2(100,48))
+	market_button.set_meta("reproduction_action","open_market")
+	market_button.add_theme_stylebox_override("normal",_style(Color("cce9d8"),Color("86b29c"),0,12,10))
+	footer_row.add_child(market_button)
 	explore_button = _button("Explore wilds →", _open_wilderness, Vector2(175,48))
 	explore_button.add_theme_color_override("font_color",AMBER)
 	footer_row.add_child(explore_button)
@@ -422,7 +444,8 @@ func _responsive() -> void:
 	display_settings_button.custom_minimum_size.x = 32 if small_layout else 82
 	sidebar.visible = not small_layout
 	heading.add_theme_font_size_override("font_size", 24 if small_layout or very_short else (30 if short_window else 34))
-	root_column.add_theme_constant_override("separation", 6 if small_layout or very_short else (8 if short_window else 10))
+	root_column.add_theme_constant_override("separation", 5 if small_layout else (6 if very_short else (8 if short_window else 10)))
+	tagline_label.visible = not small_layout
 	display_grid.custom_minimum_size.y = 82 if small_layout else (72 if short_window else 108)
 	display_heading.visible = sim == null
 	brand_label.visible = not small_layout
@@ -456,6 +479,10 @@ func _responsive() -> void:
 	care_button.text = "Tools" if small_layout else "Tool shed"
 	care_button.disabled = sim!=null
 	care_button.visible = sim==null
+	plant_button.visible = sim==null
+	plant_button.disabled = sim!=null
+	synergy_label.visible = not small_layout or sim!=null
+	market_button.disabled = sim!=null
 	breeding_button.text = "Breed" if small_layout else "Crossbreeding"
 	breeding_button.disabled = sim != null
 	_refresh_reproduction_counters()
@@ -465,8 +492,10 @@ func _responsive() -> void:
 	primary_button.text = "Battle" if small_layout else "Let the gardens meet   →"
 	if sim != null: primary_button.text = "In bloom" if small_layout else "Gardens in bloom"
 	if is_instance_valid(modal): _position_modal()
-	toast_panel.position = Vector2(maxf(12, (size.x - 390) / 2), size.y - 145)
-	toast_panel.size.x = minf(480, size.x - 24)
+	var toast_width: float = minf(480,size.x-24)
+	toast_label.custom_minimum_size.x = minf(340,maxf(1,toast_width-44))
+	toast_panel.size.x = toast_width
+	toast_panel.position = Vector2(maxf(12,(size.x-toast_width)*0.5),maxf(12,footer_row.position.y-maxf(72,toast_panel.get_combined_minimum_size().y)-10))
 
 func _clear(node: Node) -> void:
 	for child in node.get_children():
@@ -481,6 +510,9 @@ func _refresh() -> void:
 	_refresh_cells()
 	_refresh_side()
 	_refresh_synergies()
+	# Rebuilt cells must immediately inherit the current window's layout, too.
+	# Waiting for a window resize left fresh mobile seedlings in desktop rows.
+	_responsive()
 	_responsive()
 
 func _make_cell(id: String, zone: String, index: int) -> Control:
@@ -597,6 +629,9 @@ func _refresh_reproduction_counters() -> void:
 	var stored: int = int(overview.get("fruits",0))
 	resources_label.text = ("LIGHT %d · FRUIT %d · SEEDS %d" if small_layout else "Gathered light  %d    /    Fruit  %d    /    Seeds  %d") % [state.resources.sunlight,stored,state.seed_bank.size()]
 	Locale.apply_tree(resources_label)
+	if is_instance_valid(market_button):
+		market_button.text = "Market" if small_layout else "Market · %d coins" % state.market_wallet()
+		Locale.apply_tree(market_button)
 	if is_instance_valid(nursery_button):
 		var ready: int = int(overview.get("ready",0))
 		nursery_button.text = ("Harvest %d" if small_layout else "Fruit & seeds · %d ripe") % ready if ready>0 else ("Harvest" if small_layout else "Fruit & seeds")
@@ -612,10 +647,10 @@ func _refresh_reproduction_counters() -> void:
 		if not is_instance_valid(button): reproduction_buttons.remove_at(index); continue
 		var id: String = str(button.get_meta("plant_id",""))
 		match str(button.get_meta("reproduction_action","")):
-			"next_cross": button.disabled = not state.get_plant(id).get("mature",false) or state.get_plant(id).get("withered",false) or sim!=null
+			"next_cross": button.disabled = not _owns_plant(id) or not state.get_plant(id).get("mature",false) or state.get_plant(id).get("withered",false) or sim!=null
 			"dna_use_pair":
 				var mate: Dictionary = state.get_plant(str(button.get_meta("parent_b","")))
-				button.disabled = not state.get_plant(id).get("mature",false) or state.get_plant(id).get("withered",false) or not mate.get("mature",false) or mate.get("withered",false) or sim!=null
+				button.disabled = not _owns_plant(id) or not _owns_plant(str(button.get_meta("parent_b",""))) or not state.get_plant(id).get("mature",false) or state.get_plant(id).get("withered",false) or not mate.get("mature",false) or mate.get("withered",false) or sim!=null
 			"harvest_all": button.disabled = int(overview.get("ready",0))==0 or sim!=null
 			"extract_all": button.disabled = state.fruit_inventory.is_empty() or sim!=null
 			_: button.disabled = int(state.fruit_status(id).get("ready_count",0))==0 or sim!=null
@@ -625,6 +660,124 @@ func _refresh_reproduction_counters() -> void:
 		var life: Dictionary = state.life_profile(str(bar.get_meta("life_plant_id","")))
 		bar.value = (1.0-float(life.get("progress",0)))*100
 	_refresh_care_counters()
+	_refresh_market_counters()
+	_refresh_planting_counters()
+
+func _open_planting(cell: int = -1,reference: Variant = null) -> void:
+	if sim!=null:
+		_toast("Finish the battle, then plant your next seed.")
+		return
+	PlantingUI.show(self,cell,reference)
+
+func _sow_at(reference: Variant,cell: int) -> void:
+	if sim!=null: return
+	var result: Dictionary = state.plant_seed_at(reference,cell)
+	if not result.get("ok",false):
+		PlantingUI.show(self,cell,reference,str(result.get("message","Choose another empty plot.")))
+		return
+	var p: Dictionary = result.plant
+	selected_id = str(p.id)
+	moving = false
+	last_log = "%s planted in plot %d. It grows automatically!" % [p.name,cell+1]
+	_play_sound("seed")
+	_refresh()
+	PlantingUI.planted(self,p,cell)
+	_care_sparkles()
+
+func _focus_planted(id: String) -> void:
+	if not _owns_plant(id): return
+	selected_id = id
+	moving = false
+	if cells.has(id) and is_instance_valid(cells[id]): cells[id].grab_focus()
+	last_log = PlantingUI.countdown(self,id) if state.bed.has(id) else "This seedling is growing on your bench. Move it into a plot when it has grown."
+	status_label.text = last_log
+	Locale.apply_tree(status_label)
+
+func _place_from_picker(id: String,zone: String,cell: int) -> void:
+	var target: Array = state.display_bed if zone=="display" else state.bed
+	if cell<0 or cell>=target.size() or not str(target[cell]).is_empty():
+		_toast("That spot is now occupied. Choose another empty spot.")
+		_close_modal()
+		return
+	_close_modal()
+	_drop_plant(id,zone,cell)
+
+func _refresh_planting_counters() -> void:
+	for index in range(planting_labels.size()-1,-1,-1):
+		var note: Label = planting_labels[index]
+		if not is_instance_valid(note): planting_labels.remove_at(index); continue
+		note.text = PlantingUI.countdown(self,str(note.get_meta("plant_id","")))
+		Locale.apply_tree(note)
+	for index in range(planting_buttons.size()-1,-1,-1):
+		var button: Button = planting_buttons[index]
+		if not is_instance_valid(button): planting_buttons.remove_at(index); continue
+		var cell: int = int(button.get_meta("bed_index",-1))
+		button.disabled = sim!=null or int(state.resources.sunlight)<10 or cell<0 or cell>=9 or not str(state.bed[cell]).is_empty() or state._market_resolve("seed",button.get_meta("seed_ref",{})).is_empty()
+
+func _open_market(tab: String = "plants",feedback: String = "") -> void:
+	MarketUI.show(self,tab,feedback)
+
+func _review_market_sale(kind: String,reference: Variant) -> void:
+	market_tab = {"plant":"plants","fruit":"fruits","seed":"seeds"}.get(kind,market_tab)
+	MarketUI.review(self,kind,reference)
+
+func _confirm_market_sale(kind: String,reference: Variant,quote_id: String) -> void:
+	if sim!=null:
+		_toast("Visit the market after the battle.")
+		return
+	var result: Dictionary = state.market_sell(kind,reference,quote_id)
+	var message: String = str(result.get("message",""))
+	if result.get("ok",false):
+		if kind=="plant":
+			if selected_id==str(reference): selected_id=""; moving=false
+			if parent_a==str(reference): parent_a=""
+			if parent_b==str(reference): parent_b=""
+		_play_sound("collect_success")
+		_refresh()
+		_open_market(market_tab,message)
+		_care_sparkles()
+	else: MarketUI.review(self,kind,reference,message)
+	_toast(message)
+
+func _market_buy(stock_key: String) -> void:
+	if sim!=null:
+		_toast("Visit the market after the battle.")
+		return
+	var result: Dictionary = state.market_buy(stock_key)
+	var message: String = str(result.get("message",""))
+	if result.get("ok",false): _play_sound("collect_success"); _refresh()
+	_open_market("shop",message)
+	_toast(message)
+
+func _refresh_market_counters() -> void:
+	for index in range(market_labels.size()-1,-1,-1):
+		var label: Label = market_labels[index]
+		if not is_instance_valid(label): market_labels.remove_at(index); continue
+		if label.has_meta("market_wallet"): label.text = "%d coins" % state.market_wallet()
+		Locale.apply_tree(label)
+	for index in range(market_buttons.size()-1,-1,-1):
+		var button: Button = market_buttons[index]
+		if not is_instance_valid(button): market_buttons.remove_at(index); continue
+		match str(button.get_meta("market_action","")):
+			"buy": button.disabled = sim!=null or state.market_wallet()<int(button.get_meta("market_cost",0))
+			"confirm_sale", "refresh_offer":
+				var quote: Dictionary = state.market_quote(str(button.get_meta("item_kind","")),button.get_meta("item_ref"))
+				var changed: bool = str(quote.get("quote_id",""))!=str(button.get_meta("quote_id",""))
+				if button.get_meta("market_action")=="refresh_offer":
+					button.visible = changed and quote.get("ok",false)
+					button.disabled = sim!=null
+				else:
+					button.disabled = sim!=null or not quote.get("eligible",false) or changed
+					button.tooltip_text = "The offer changed. Refresh it before selling." if changed else str(quote.get("reason",""))
+					if is_instance_valid(modal):
+						for note in modal_content.get_children():
+							if note is Label and note.has_meta("market_review_notice"):
+								note.visible = changed
+								note.text = "The offer changed. Refresh it before selling." if quote.get("ok",false) else "This item is no longer at your stall. Return to the market to choose another."
+								Locale.apply_tree(note)
+
+func _owns_plant(id: String) -> bool:
+	return state.owns_plant(id)
 
 func _refresh_care_counters() -> void:
 	for index in range(care_buttons.size()-1,-1,-1):
@@ -702,6 +855,11 @@ func _care_sparkles() -> void:
 func _append_reproduction_block(target: VBoxContainer,p: Dictionary) -> void:
 	target.add_child(_measurement_label(str(p.id)))
 	target.add_child(_care_entry(str(p.id)))
+	var offer: Button = _button("See this plant's market offer",func(): _review_market_sale("plant",str(p.id)))
+	offer.set_meta("market_action","review_sale")
+	offer.set_meta("item_kind","plant")
+	offer.set_meta("item_ref",str(p.id))
+	target.add_child(offer)
 	target.add_child(_wrap("Combined lineages: %s" % _lineage_text(p),12,Color("b8c9a3")))
 	target.add_child(_live_life_label(str(p.id)))
 	target.add_child(_life_meter(str(p.id)))
@@ -718,7 +876,7 @@ func _refresh_side() -> void:
 	if sim != null:
 		_build_battle_notes()
 		return
-	if selected_id != "" and state.plants.has(selected_id):
+	if selected_id != "" and _owns_plant(selected_id):
 		var p: Dictionary = state.get_plant(selected_id)
 		side_content.add_child(_label("SAY HELLO TO YOUR PLANT", 10, MUTED))
 		var art := Portrait.new()
@@ -744,7 +902,13 @@ func _refresh_side() -> void:
 		side_content.add_child(_label("LET'S GROW SOMETHING WONDERFUL", 10, MUTED))
 		side_content.add_child(_label("Little sprouts.\nBig surprises!",25,INK,true))
 		side_content.add_child(_wrap("Make a giant, raise a tiny favorite, or bring home a wild new friend. Every plant is a little different.",14))
+		var start_planting: Button = _button("Plant a seed →",func(): planting_page=0; _open_planting())
+		start_planting.set_meta("planting_action","open")
+		start_planting.add_theme_stylebox_override("normal",_style(Color("ffcf94"),Color("cb9258"),0,12,12))
+		side_content.add_child(start_planting)
+		side_content.add_child(_wrap("Tap an empty plot → choose a seed → Plant here. Your seedling grows automatically in 12 seconds.",13,INK))
 		side_content.add_child(_action_button("Open the tool shed",func(): _open_care(),"open_care"))
+		side_content.add_child(_action_button("Visit the Sprout Market",func(): market_page=0; _open_market(),"open_market"))
 		var records: Dictionary = CareUI.garden_records(self)
 		if not str(records.tallest).is_empty():
 			side_content.add_child(_label("YOUR GARDEN GIANTS",11,AMBER))
@@ -752,7 +916,7 @@ func _refresh_side() -> void:
 			side_content.add_child(_wrap("Heaviest: %s · %s g" % [state.get_plant(str(records.heaviest)).name,CareUI._number(float(records.weight))],13,INK))
 		else:
 			side_content.add_child(_wrap("Your seeds are ready for a fresh start.",14,INK))
-			side_content.add_child(_action_button("Plant a seed",_open_seeds,"open_nursery"))
+			side_content.add_child(_button("Choose a seed to plant",func(): _open_planting()))
 		side_content.add_child(_wrap("Mix two plants → pick their fruit → plant the seeds → meet your new plant pals!",14,INK))
 		var overview: Dictionary = state.fruit_overview()
 		side_content.add_child(_wrap("%d ripe fruit · %d harvested fruit · %d seeds" % [overview.get("ready",0),overview.get("fruits",0),state.seed_bank.size()],13,AMBER))
@@ -772,6 +936,7 @@ func _refresh_side() -> void:
 		side_content.add_child(_button("Gather display rewards", _claim_display))
 		side_content.add_child(_button("Collect daily growth", _collect_daily))
 		side_content.add_child(_button("Field guide",_open_guide))
+		side_content.add_child(_button("Collection book",_open_codex))
 		side_content.add_child(_button("Sound & language",_open_settings))
 		side_content.add_child(_button("Display & resolution",_open_display_settings))
 		side_content.add_child(_wrap("Tap a plant to say hello. Drag it into the grow patch, or grab a tool and help it flourish!", 12))
@@ -797,8 +962,10 @@ func _choose_plant(id: String, zone: String, index: int) -> void:
 		_drop_plant(selected_id, zone, index)
 		return
 	if id == "":
-		_toast("Select a specimen from the tray, then choose its place in the soil.")
+		if zone=="bed": planting_page=0; _open_planting(index)
+		elif zone=="display": PlantingUI.show_move_picker(self,zone,index)
 		return
+	if not _owns_plant(id): _open_detail(id); return
 	selected_id = id
 	moving = zone == "tray"
 	last_log = "%s selected. %s" % [state.get_plant(id).name, "Choose a soil or display cell to plant." if moving else "Examine its genes, breed, or move it."]
@@ -822,6 +989,7 @@ func _drop_plant(id: String, zone: String, index: int) -> void:
 	else: _toast("Withered plants remain in the archive. Sow their seeds to continue the lineage." if state.get_plant(id).get("withered",false) else "This specimen is still growing. Let it mature before planting.")
 
 func _compact_plant(id: String) -> void:
+	if not _owns_plant(id): _open_detail(id); return
 	var p: Dictionary = state.get_plant(id)
 	_open_modal(str(p.name), "specimen")
 	modal_content.add_child(_measurement_label(id))
@@ -946,7 +1114,7 @@ func _open_dna_compare(id: String,mate_id: String = "",goal_key: String = "patte
 func _use_dna_pair(id: String,mate_id: String) -> void:
 	var a: Dictionary = state.get_plant(id)
 	var b: Dictionary = state.get_plant(mate_id)
-	if a.is_empty() or b.is_empty() or id==mate_id or not a.get("mature",false) or not b.get("mature",false) or a.get("withered",false) or b.get("withered",false) or sim!=null:
+	if not _owns_plant(id) or not _owns_plant(mate_id) or a.is_empty() or b.is_empty() or id==mate_id or not a.get("mature",false) or not b.get("mature",false) or a.get("withered",false) or b.get("withered",false) or sim!=null:
 		_toast("Choose two living, mature plants for this cross.")
 		return
 	parent_a = id
@@ -971,9 +1139,10 @@ func _open_detail(id: String) -> void:
 	bio.add_child(_wrap("%s\n%s%s" % [p.species,p.type," × " + str(p.secondary_type) if p.get("secondary_type", "") != "" else ""], 17, INK))
 	bio.add_child(_wrap(" / ".join(p.get("skills",[])), 13, Color("b5caa3")))
 	bio.add_child(_wrap("Mature specimen" if p.get("mature",true) else "Unfurling · mature in a few moments", 12))
+	if p.get("sold",false): bio.add_child(_wrap("This plant has a new home. Its family history stays in your archive.",13,AMBER))
 	if p.get("origin",{}).get("kind","") == "wild":
 		bio.add_child(_wrap("Wild-collected in %s\nField patch %s" % [p.origin.get("biome","the wilds"),p.origin.get("site","unknown")],12,AMBER))
-	if state.plants.has(id):
+	if _owns_plant(id):
 		var rename := LineEdit.new()
 		rename.text = p.name
 		rename.placeholder_text = "Name this plant"
@@ -982,7 +1151,7 @@ func _open_detail(id: String) -> void:
 		bio.add_child(_button("Save name", func(): state.rename_plant(id,rename.text); _refresh(); _open_detail(id)))
 		bio.add_child(_button("Unpin favorite" if p.get("favorite",false) else "Keep as favorite", func(): state.toggle_favorite(id); _refresh(); _open_detail(id)))
 		bio.add_child(_button("Choose as parent", func(): _breed_from(id)))
-	if state.plants.has(id): _append_reproduction_block(modal_content,p)
+	if _owns_plant(id): _append_reproduction_block(modal_content,p)
 	else: modal_content.add_child(_action_button("Traits & breeding",func(): _open_dna(id),"view_dna",id))
 	_line(modal_content)
 	modal_content.add_child(_label("THE EXPRESSED GENOME", 11, AMBER))
@@ -1042,6 +1211,9 @@ func _append_descendants(id: String, depth: int) -> void:
 	if depth == 0 and not found: modal_content.add_child(_label("A lineage waiting to unfold.", 12, MUTED))
 
 func _breed_from(id: String) -> void:
+	if not _owns_plant(id):
+		_toast("This plant has a new home. Its family history stays in your archive.")
+		return
 	if exploring: _return_from_wilderness()
 	if sim != null:
 		_toast("Let the gardens settle before breeding.")
@@ -1253,7 +1425,14 @@ func _reveal(p: Dictionary, message: String) -> void:
 				gene_notes.text = raw
 				Locale.apply_tree(gene_notes))
 		tw.tween_interval(0.35)
-	modal_content.add_child(_wrap("Already growing in your specimen tray. Its parents, carried genes, and history have been preserved.", 13))
+	var planted_cell: int = state.bed.find(str(p.id))
+	modal_content.add_child(_wrap("Already planted in plot %d. It grows automatically in 12 seconds." % [planted_cell+1] if planted_cell>=0 and not p.get("mature",false) else ("Already planted in plot %d." % [planted_cell+1] if planted_cell>=0 else "This plant is on your bench. Move it into an empty plot when it has grown."),13))
+	if not p.get("mature",false):
+		var growing: Label = _wrap(PlantingUI.countdown(self,str(p.id)),17,AMBER)
+		growing.set_meta("planting_countdown",true)
+		growing.set_meta("plant_id",str(p.id))
+		planting_labels.append(growing)
+		modal_content.add_child(growing)
 	modal_content.add_child(_wrap("Combined lineages: %s" % _lineage_text(p),13,AMBER))
 	modal_content.add_child(_live_life_label(str(p.id)))
 	modal_content.add_child(_action_button("Traits & breeding",func(): _open_dna(str(p.id)),"view_dna",str(p.id)))
@@ -1262,7 +1441,9 @@ func _reveal(p: Dictionary, message: String) -> void:
 	reproduction_buttons.append(next_cross)
 	modal_content.add_child(next_cross)
 	if not p.get("mature",false): modal_content.add_child(_button("Nurture · 5 light",func(): _perform_nurture(str(p.id))))
-	modal_content.add_child(_button("Return to my garden", func(): _close_modal(); _refresh()))
+	var watch: Button = _button("Watch it grow →" if not p.get("mature",false) else "Return to my garden",func(): _close_modal(); _refresh(); _focus_planted(str(p.id)))
+	watch.set_meta("planting_action","watch_grow")
+	modal_content.add_child(watch)
 	modal_content.add_child(_button("Read the genome", func(): _open_detail(str(p.id))))
 
 func _perform_nurture(id: String) -> void:
@@ -1273,6 +1454,9 @@ func _perform_nurture(id: String) -> void:
 func _open_seeds() -> void:
 	if exploring: _return_from_wilderness()
 	_open_modal("Fruit & seed nursery","seeds")
+	var planting: Button = _button("Plant a seed →",func(): planting_page=0; _open_planting())
+	planting.set_meta("planting_action","open")
+	modal_content.add_child(planting)
 	var overview: Dictionary = state.fruit_overview()
 	modal_content.add_child(_wrap("Pollinate → harvest fruit → extract seeds → sow → grow → cross again. Each seed preserves its own complete inherited DNA.",14))
 	modal_content.add_child(_wrap("%d ripe fruit · %d harvested fruit · %d seeds" % [overview.get("ready",0),overview.get("fruits",0),state.seed_bank.size()],13,AMBER))
@@ -1359,6 +1543,11 @@ func _nursery_fruits() -> void:
 		extract.set_meta("fruit_id",fruit_id)
 		extract.disabled = sim!=null
 		card.add_child(extract)
+		var offer: Button = _button("See fruit's market offer",func(): _review_market_sale("fruit",fruit_id))
+		offer.set_meta("market_action","review_sale")
+		offer.set_meta("item_kind","fruit")
+		offer.set_meta("item_ref",fruit_id)
+		card.add_child(offer)
 
 func _nursery_seeds() -> void:
 	modal_content.add_child(_wrap("Hybrid and harvested lineage seeds preserve their exact DNA. Sowing costs 10 light; seedlings mature in 12 seconds and can cross again.",12))
@@ -1396,10 +1585,16 @@ func _nursery_seeds() -> void:
 		else:
 			card.add_child(_wrap("%s · %s · %s tendency" % [seed_data.get("rarity","Common"),seed_data.get("type","Wild"),seed_data.get("pattern","Unresolved")],12))
 			card.add_child(_wrap("Founding seed · a new expression of its archived lineage.",11,MUTED))
-		var plant: Button = _action_button("Sow seed · 10 light",func(): _plant_saved_seed(seed_index),"plant_seed")
+		var plant: Button = _action_button("Plant seed · 10 light",func(): _plant_saved_seed(seed_index),"plant_seed")
 		plant.set_meta("seed_index",seed_index)
 		plant.disabled = sim!=null or int(state.resources.sunlight)<10
 		card.add_child(plant)
+		var reference: Variant = state.market_ref("seed",seed_index)
+		var offer: Button = _button("See seed's market offer",func(): _review_market_sale("seed",reference))
+		offer.set_meta("market_action","review_sale")
+		offer.set_meta("item_kind","seed")
+		offer.set_meta("item_ref",reference)
+		card.add_child(offer)
 
 func _harvest_fruit(id: String) -> void:
 	if sim!=null: _toast("Harvest once the roots have settled."); return
