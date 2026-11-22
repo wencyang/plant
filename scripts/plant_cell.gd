@@ -9,8 +9,6 @@ var plant: Dictionary = {}
 var zone: String = "bed"
 var index: int = 0
 var selected: bool = false
-var battle_locked: bool = false
-var fighter: Dictionary = {}
 var portrait: Control
 var title_label: Label
 var meta_label: Label
@@ -59,18 +57,15 @@ func refresh() -> void:
 		title_label.text = "+ Add a plant" if zone=="display" else ("+ Plant a seed" if zone=="bed" else "+")
 		meta_label.text = "Tap to choose" if zone in ["bed","display"] else ""
 		tooltip_text = "Empty display shelf · tap to choose a mature plant" if zone=="display" else "Empty grow patch · tap to choose a seed or move a plant here"
-		if battle_locked:
-			title_label.text=""
-			meta_label.text=""
 	else:
 		title_label.text = plant.get("name", "Unknown")
 		var generation: int = int(plant.get("generation", 1))
 		meta_label.add_theme_color_override("font_color",Color("617957"))
 		var measure: Dictionary = Care.measurements(plant)
 		meta_label.text = "%s · G%d" % [plant.get("type", "Leaf"), generation]
-		if zone in ["bed","tray"] and not battle_locked:
+		if zone in ["bed","tray"]:
 			meta_label.text = "%.0f cm · %.0f g" % [float(measure.get("height_cm",0)),float(measure.get("weight_g",0))]
-		if not plant.get("mature",true) and not battle_locked:
+		if not plant.get("mature",true):
 			_update_growth_label()
 		elif meta_label.has_meta("plant_growth_label"): meta_label.remove_meta("plant_growth_label")
 		if plant.get("withered",false):
@@ -103,18 +98,7 @@ func _layout() -> void:
 	if meta_label.get_theme_font_size("font_size") != meta_size: meta_label.add_theme_font_size_override("font_size",meta_size)
 	var title_height: float = ceilf(title_label.get_theme_font("font").get_height(title_size))*(2 if wrap_invitation else 1)
 	var meta_height: float = ceilf(meta_label.get_theme_font("font").get_height(meta_size))
-	if battle_locked and zone in ["bed","enemy"]:
-		portrait.position = Vector2(3,1)
-		portrait.size = Vector2(minf(96,size.x*0.44),maxf(1,size.y-3))
-		title_label.position = Vector2(portrait.size.x+6,6)
-		title_label.size = Vector2(maxf(1,size.x-portrait.size.x-12),title_height)
-		title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		meta_label.position = Vector2(portrait.size.x+6,8+title_height)
-		meta_label.size = Vector2(maxf(1,size.x-portrait.size.x-12),meta_height)
-		meta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		_laying_out = false
-		return
-	if not battle_locked and zone == "bed" and not plant.is_empty() and size.x >= 180 and size.y >= 70:
+	if zone == "bed" and not plant.is_empty() and size.x >= 180 and size.y >= 70:
 		# Wide garden beds have enough room to place the label beside the plant.
 		# Give the specimen the full card height instead of shrinking its crown
 		# to make room for two rows of text underneath.
@@ -148,7 +132,7 @@ func _layout() -> void:
 	queue_redraw()
 
 func _is_growing() -> bool:
-	return not plant.is_empty() and not bool(plant.get("mature",true)) and not bool(plant.get("withered",false)) and not battle_locked
+	return not plant.is_empty() and not bool(plant.get("mature",true)) and not bool(plant.get("withered",false))
 
 func _update_growth_label() -> void:
 	var now: int = int(Time.get_unix_time_from_system())
@@ -167,16 +151,11 @@ func _process(delta: float) -> void:
 	if not plant.is_empty() and pressed_at > 0 and clock - pressed_at > 0.55 and not held:
 		held = true
 		inspected.emit(str(plant.get("id", "")))
-	if not fighter.is_empty() and is_instance_valid(portrait):
-		portrait.alive = fighter.get("alive", true)
-		portrait.energy = float(fighter.get("energy", 0))
-		queue_redraw()
 
 func _draw() -> void:
 	var rect := Rect2(Vector2(1, 1), size - Vector2(2, 2))
 	var bg := Color("e4f0c7") if zone == "display" else Color("edf4ce")
 	if zone == "tray": bg = Color("fff3cf")
-	if zone == "enemy": bg = Color("f4e8d4")
 	if plant.is_empty(): bg = Color("e0e8b9")
 	if hovered: bg = bg.lightened(0.13)
 	if selected: bg = Color("fff0ad")
@@ -184,17 +163,6 @@ func _draw() -> void:
 	_draw_living_soil()
 	_draw_grown_frame(rect)
 	if not plant.is_empty():
-		# Garden specimens have no missing health to communicate. Combat meters
-		# stay beside the artwork instead of running through its root silhouette.
-		if battle_locked and not fighter.is_empty() and zone in ["bed","enemy"]:
-			var max_hp: float = float(fighter.get("max_hp",plant.get("stats",{}).get("vitality",100)))
-			var hp: float = float(fighter.get("hp",max_hp))
-			var bar_y: float = size.y-9
-			var bar_start: float = portrait.position.x+portrait.size.x+7
-			var bar_width: float = maxf(1,size.x-10-bar_start)
-			draw_line(Vector2(bar_start,bar_y),Vector2(bar_start+bar_width,bar_y),Color("c7d7a2"),2)
-			draw_line(Vector2(bar_start,bar_y),Vector2(bar_start+bar_width*clampf(hp/maxf(1,max_hp),0,1),bar_y),Color("66a757"),2)
-			draw_line(Vector2(bar_start,bar_y+3),Vector2(bar_start+bar_width*clampf(float(fighter.get("energy",0))/100.0,0,1),bar_y+3),Color("e0aa4b"),1)
 		if _is_growing():
 			_draw_growth_meter()
 		if plant.get("favorite", false):
@@ -213,12 +181,10 @@ func _draw_living_soil() -> void:
 		return
 	# A single quiet planting plane anchors the sprite. Its width follows the
 	# artwork, so a wide bed cell never becomes a second striped illustration.
-	var combat: bool = battle_locked and zone in ["bed","enemy"]
 	var center_x: int = roundi(portrait.position.x+portrait.size.x*0.5)
 	var base_y: int = roundi(portrait.position.y+portrait.size.y-3)
 	var half: int = maxi(4,roundi(minf(portrait.size.x*0.26,portrait.size.y*0.32)))
 	if plant.is_empty(): half = maxi(7,mini(half,33))
-	if combat: half = mini(half,22)
 	var earth := Color("c4bc87") if not plant.is_empty() else Color("c0b481")
 	draw_rect(Rect2(center_x-half+3,base_y-2,maxi(2,half*2-6),2),earth)
 	draw_rect(Rect2(center_x-half,base_y,maxi(2,half*2),2),earth.darkened(0.08))
@@ -242,7 +208,6 @@ func _draw_empty_affordance() -> void:
 			draw_rect(Rect2(x,pit.end.y,4,1),Color("ad9b70"))
 		draw_rect(Rect2(pit.position.x,pit.position.y+4,1,4),Color("ad9b70"))
 		draw_rect(Rect2(pit.end.x,pit.position.y+4,1,4),Color("ad9b70"))
-	if battle_locked: return
 	var center_y: float = middle.y-1 if zone=="display" else middle.y-6
 	var plus := Color("729451") if zone=="display" else Color("bd8e51")
 	draw_rect(Rect2(middle.x-2,center_y-6,4,12),plus)
@@ -301,7 +266,7 @@ func _gui_input(event: InputEvent) -> void:
 
 func _get_drag_data(_at_position: Vector2) -> Variant:
 	pressed_at = 0
-	if plant.is_empty() or battle_locked or plant.get("withered",false): return null
+	if plant.is_empty() or plant.get("withered",false): return null
 	var p := Portrait.new()
 	p.plant = plant
 	p.custom_minimum_size = Vector2(100, 110)
@@ -310,7 +275,7 @@ func _get_drag_data(_at_position: Vector2) -> Variant:
 	return {"plant_id": str(plant.get("id", ""))}
 
 func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
-	return not battle_locked and data is Dictionary and data.has("plant_id")
+	return data is Dictionary and data.has("plant_id")
 
 func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	dropped.emit(str(data.plant_id), zone, index)

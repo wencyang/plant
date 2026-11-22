@@ -165,7 +165,7 @@ static func show(g: Control,id: String = "",feedback: String = "") -> void:
 		var cost: int = int(status.get("cost",0))
 		var use_button: Button = g._action_button("Use · free" if cost==0 else "Use · %d light" % cost,func(): g._apply_care(chosen,tool_key),"care_apply",chosen)
 		use_button.set_meta("care_tool",tool_key)
-		use_button.disabled = not status.get("allowed",false) or g.sim!=null
+		use_button.disabled = not status.get("allowed",false)
 		use_button.tooltip_text = str(status.get("reason",""))
 		use_button.custom_minimum_size.y = 44
 		body.add_child(use_button)

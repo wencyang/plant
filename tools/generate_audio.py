@@ -120,7 +120,7 @@ def music(context):
     for chord_index, chord in enumerate(CHORDS):
         start = chord_index * 8
         for voice, note in enumerate(chord):
-            canvas.tone(start, 9.4, note, .075 if context != 'battle' else .060, [-.50,.38,-.15,.55][voice], 'pad', 100+voice)
+            canvas.tone(start, 9.4, note, .075, [-.50,.38,-.15,.55][voice], 'pad', 100+voice)
         if context == 'garden':
             for i, note in enumerate(GARDEN_MELODY[chord_index]):
                 canvas.tone(start + .75 + i * 1.75, 2.0, note, .115 if i != 3 else .075, [-.35,.28,-.12,.35][i], 'pluck', chord_index*17+i)
@@ -129,15 +129,6 @@ def music(context):
             for i, note in enumerate(WILD_MELODY[chord_index]):
                 canvas.tone(start + .45 + i * 1.8, 1.65, note+12, .085, .16 if i % 2 else -.18, 'flute', chord_index*23+i)
                 if i % 2 == 0: canvas.tone(start + 1 + i * 1.8, 1.3, chord[(i+1)%4]+12, .044, -.38, 'pluck')
-        else:
-            for beat in range(16):
-                offset = beat * .5
-                note = chord[0] if beat % 4 < 2 else chord[1]-12
-                canvas.tone(start+offset, .5, note, .065, -.12 if beat % 2 else .12, 'pluck')
-                if beat % 2 == 0: canvas.brush(start+offset, .18, .027, -.22 if beat % 4 else .22, chord_index*61+beat, .065, 82)
-                elif beat % 4 == 3: canvas.brush(start+offset+.125, .09, .020, .35 if beat % 3 else -.35, chord_index*79+beat, .25)
-            for i, note in enumerate(WILD_MELODY[chord_index][1:]):
-                canvas.tone(start+1.5+i*2, 1.9, note+12, .053, [-.30,.25,.0][i], 'flute', 21+i)
     canvas.write(f'music_{context}.wav', .24)
 
 def ambience():
@@ -178,13 +169,10 @@ def effects():
     effect('graft', .58, [(0,.3,62,.13,-.2,'pluck'),(.18,.35,69,.1,.2,'pluck')], [(0,.06,.06,0,29,.08)], .25)
     effect('mutate', 1.1, [(0,.75,69,.09,-.4,'flute'),(.10,.75,70,.025,.4,'flute'),(.35,.65,77,.09,0,'bell')], [(0,.8,.06,0,77,.035)], .28)
     effect('bloom', 1.8, [(i*.055,1.45,n,.10,(-.5+i*.2),'bell') for i,n in enumerate([62,69,74,77,81,86])], [(0,1.4,.06,0,325,.02)], .38)
-    effect('battle_start', 1.05, [(0,.55,50,.11,-.2,'pluck'),(.2,.55,57,.1,.2,'pluck'),(.42,.55,62,.1,0,'flute')], [(0,.18,.08,0,920,.055,90)], .30)
-    effect('battle_win', 2.0, [(i*.16,1.0,n,.12,(-.4+i*.16),'bell') for i,n in enumerate([62,65,69,74,77,86])], peak=.38)
-    effect('battle_lose', 1.6, [(i*.20,.85,n,.085,(-.25+i*.2),'flute') for i,n in enumerate([69,65,62,50])], peak=.27)
 
 def main():
     OUT.mkdir(parents=True,exist_ok=True)
-    for context in ['garden','wild','battle']: music(context)
+    for context in ['garden','wild']: music(context)
     ambience()
     effects()
     (OUT/'README.md').write_text('''# Original game audio\n\nAll music, ambience and effects were composed and synthesized specifically for The Quiet Conservatory by `tools/generate_audio.py`. No recordings, third-party music or external samples are used.\n\nMusic and forest ambience are 64-second, 22050 Hz, stereo 16-bit PCM WAV loops. Musical note tails wrap around each loop point. Soundscape applies quiet mix levels and crossfades. Effects are short, pooled and rate limited.\n\nRun `python3 tools/generate_audio.py` to regenerate the assets with Python\'s standard library.\n''')

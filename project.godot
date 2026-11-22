@@ -1,4 +1,4 @@
-; Plant Auto-Battler — persistent alien conservatory.
+; The Quiet Conservatory — a playful plant breeding and collecting adventure.
 config_version=5
 
 [application]
@@ -6,7 +6,7 @@ config/name="The Quiet Conservatory"
 config/icon="res://icon.svg"
 run/main_scene="res://scenes/garden.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
-config/description="A pixel botanical adventure. Explore eight biomes, collect wild plants, and grow a lineage. English and Chinese, with original music and sound."
+config/description="An ink-illustrated botanical adventure. Explore eight landscapes and 24 growing habitats, collect unusual wild plants, and breed a living family. English and Chinese, with original music and sound."
 
 [display]
 window/dpi/allow_hidpi=true
@@ -24,7 +24,7 @@ renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/default_filters/use_nearest_mipmap_filter=false
 textures/canvas_textures/default_texture_filter=0
-environment/defaults/default_clear_color=Color(0.027, 0.059, 0.055, 1)
+environment/defaults/default_clear_color=Color(0.75, 0.91, 0.80, 1)
 
 [input]
 ui_cancel={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":4194305)]}

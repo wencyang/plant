@@ -1,6 +1,6 @@
 extends Control
 class_name PlantPortrait
-## Authored botanical pixel sprites with gene-driven tissue pigments and patterns.
+## Inked botanical originals with gene-driven tissue pigments and patterns.
 ## High-resolution originals are shared; per-specimen shader parameters preserve
 ## painted anatomy and lighting without rasterizing textures on each idle frame.
 ## The deterministic procedural renderer remains a fallback for missing assets.
@@ -265,13 +265,15 @@ void fragment() {
 	float green = smoothstep(-0.015,0.075,source.g-max(source.r*0.96,source.b*1.02));
 	float tissue = smoothstep(0.17,0.34,light)*(1.0-smoothstep(0.91,1.0,light))*leaf_zone;
 	float leafy = (species_kind==0 || species_kind==2) ? 1.0 : 0.0;
-	vec3 foliage = mix(vec3(0.34,0.59,0.29),pigment.rgb,0.30+leafy*0.43);
+	vec3 foliage = mix(vec3(0.40,0.55,0.37),pigment.rgb,0.30+leafy*0.43);
 	vec3 body = colored_tissue(source.rgb,pigment.rgb,0.70);
 	vec3 leaf = colored_tissue(source.rgb,foliage,0.55+leafy*0.12);
 	vec3 color = mix(body,leaf,green);
 	// Warm wood and tiny bare roots retain their authored bark colors.
 	color = mix(source.rgb,color,leaf_zone);
-	vec2 pixel_uv = floor(uv/TEXTURE_PIXEL_SIZE/3.0)*TEXTURE_PIXEL_SIZE*3.0;
+	// Inherited markings follow the smooth inked tissue rather than a coarse
+	// pixel grid, so the same genes stay legible in close-ups and small cards.
+	vec2 pixel_uv = uv;
 	float marking = 0.0;
 	if (pattern_kind==1) {
 		float stripe = sin((pixel_uv.y+pixel_uv.x*0.31)*76.0+sin(pixel_uv.x*19.0)*0.7+seed_phase);
@@ -315,7 +317,7 @@ void fragment() {
 	}
 	if (surface_kind==1 || surface_kind==4) {
 		float gleam = pow(max(0.0,sin(uv.x*19.0+uv.y*7.0)),14.0)*smoothstep(0.48,0.82,light)*green;
-		color = mix(color,vec3(0.94,0.98,0.82),gleam*(surface_kind==4 ? 0.18 : 0.11));
+		color = mix(color,vec3(0.94,0.98,0.82),gleam*(surface_kind==4 ? 0.13 : 0.08));
 	} else if (surface_kind==2) {
 		color = mix(color,accent.rgb,0.12*tissue);
 		color += accent.rgb*smoothstep(0.62,0.84,light)*tissue*0.08;
@@ -331,8 +333,8 @@ void fragment() {
 	// A gentle sunlit lift keeps tiny botanical details readable on pale soil.
 	float sunlight = smoothstep(0.16,0.46,light)*(1.0-smoothstep(0.77,1.0,light));
 	float gray = luminance(color);
-	color = mix(vec3(gray),color,1.16);
-	color += vec3(0.065,0.071,0.025)*sunlight;
+	color = mix(vec3(gray),color,1.07);
+	color += vec3(0.035,0.040,0.015)*sunlight;
 	if (!living) color = mix(color,vec3(luminance(color))*vec3(0.83,0.89,0.70),0.83)*0.67;
 	if (senescence>0.0) {
 		float edge_light = smoothstep(0.34,0.78,light);
@@ -343,6 +345,9 @@ void fragment() {
 		float dry_value = luminance(color);
 		color = mix(color,vec3(0.70,0.49,0.28)*dry_value*1.45,0.91)*0.78;
 	}
+	// Fine authored contours remain dark through pigment, glow and aging.
+	// Flat cel colors and paper-like highlights belong inside those contours.
+	color = mix(source.rgb,color,smoothstep(0.10,0.26,light));
 	if (unidentified) color = vec3(0.16,0.27,0.22)*(0.85+light*0.24);
 	COLOR = vec4(clamp(color,0.0,1.0),source.a*reveal_amount)*vertex_tint;
 }

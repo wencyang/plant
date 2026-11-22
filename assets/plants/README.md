@@ -1,3 +1,9 @@
+# Illustrated plant families
+
+The game now uses the eight 1024 × 1536 transparent originals in `illustrated/`: leaf, bloom, vine, root, spore, toxin, parasite, and carnivorous. They follow the user-supplied fine-ink, flat-color landscape references. Every portrait uses these sources, including inherited colors and patterns, literal petal counts, mixed offspring organs, grafts, growth and aging. The completed source prompts are recorded in `../landscapes/prompts.json` (built-in imagegen).
+
+The earlier source set below is retained as art history.
+
 # Botanical sprite artwork
 
 Eight original pixel-art botanical specimens replace the prototype's simple

@@ -20,7 +20,7 @@ func run() -> void:
 	check(mixer._effects.size()==8,"Effect voices are bounded and reusable")
 	check(not mixer._any_music_playing(),"Headless/preview audio does not start music")
 	check(not mixer._ambience.playing,"Headless/preview audio does not start ambience")
-	for asset in ["music_garden","music_wild","music_battle","ambience_forest"]:
+	for asset in ["music_garden","music_wild","ambience_forest"]:
 		var stream: AudioStreamWAV = mixer._stream(asset,true)
 		check(stream!=null,"Original loop %s is readable before editor import" % asset)
 		if stream == null: continue
@@ -90,15 +90,15 @@ func run() -> void:
 			if voice.volume_db > -79: silent = false
 		check(silent,"Mute immediately silences effects already playing")
 		mixer.set_muted(false)
-		mixer.set_context("battle")
+		mixer.set_context("wild","Sporefen")
 		await create_timer(2.0).timeout
 		var music_voices: int = 0
-		var battle_playing: bool = false
+		var wilderness_playing: bool = false
 		for voice in mixer._music:
 			if voice.playing:
 				music_voices+=1
-				battle_playing = voice.get_meta("context","")=="battle"
-		check(music_voices==1 and battle_playing,"Context changes crossfade and stop the previous music voice")
+				wilderness_playing = voice.get_meta("context","")=="wild"
+		check(music_voices==1 and wilderness_playing,"Garden-to-wilderness changes crossfade and stop the previous music voice")
 		check(mixer.get_child_count()==11,"Playback transitions keep the voice pool bounded")
 	var path: String = mixer.settings_path
 	mixer.queue_free()

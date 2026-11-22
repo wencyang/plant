@@ -152,7 +152,7 @@ static func _translate(source: String, depth: int) -> String:
 		var lines: PackedStringArray = source.split("\n")
 		for i in range(lines.size()): lines[i] = _translate(lines[i],depth+1)
 		return "\n".join(lines)
-	# Battle summaries are assembled sentence by sentence in canonical English.
+	# Garden stories can be assembled sentence by sentence in canonical English.
 	var sentences: Array = _sentences.search_all(source)
 	if sentences.size() > 1:
 		var translated: Array[String] = []

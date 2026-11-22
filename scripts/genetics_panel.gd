@@ -122,6 +122,17 @@ static func show_traits(g: Control,id: String) -> void:
 	compare.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	actions.add_child(compare)
 	actions.add_child(g._wrap("The preview is free. It does not pollinate or spend resources.",11,MUTED))
+	var habitat_button: Button=g._button("Where this family grows →",func(): g._open_plant_habitats(id))
+	habitat_button.set_meta("habitat_action","guide")
+	actions.add_child(habitat_button)
+	var field_talents: Dictionary=g.state.adventure_capabilities(p)
+	if not field_talents.get("labels",[]).is_empty():
+		overview.add_child(g._wrap("Useful in the field: %s" % ", ".join(field_talents.labels),13,AMBER))
+		if owned:
+			var field_use: Button=g._button("Try this plant at the stream →",func(): g._open_adventure(); g._show_adventure_use("lantern" if str(g.state.adventure_info().stage) in ["lantern","restored"] else "stream",id))
+			field_use.set_meta("adventure_action","use")
+			field_use.set_meta("plant_id",id)
+			actions.add_child(field_use)
 	var parents: Array = p.get("parents",[])
 	if not parents.is_empty():
 		var links := HBoxContainer.new()
@@ -149,7 +160,7 @@ static func show_traits(g: Control,id: String) -> void:
 		var stored: VBoxContainer = _fold(g,g.modal_content,"Stored traits · not currently visible","dna_stored_traits")
 		stored.add_child(g._wrap("These genes are still inherited. They become visible when a descendant has the matching plant organs.",12,MUTED))
 		for trait_info: Dictionary in inactive: _trait_card(g,stored,p,trait_info)
-	var stats: VBoxContainer = _fold(g,g.modal_content,"Battle traits · what the numbers do","dna_battle_traits")
+	var stats: VBoxContainer = _fold(g,g.modal_content,"Inherited growth potential","dna_growth_traits")
 	for stat: Dictionary in Guide.cross_preview(p,p).get("stats",[]):
 		var card: VBoxContainer = _card(g,stats)
 		card.add_child(g._wrap("%s: %d" % [stat.label,int(p.get("stats",{}).get(stat.key,0))],15,INK))
@@ -172,7 +183,7 @@ static func show_traits(g: Control,id: String) -> void:
 	advanced.add_child(g._wrap(str(genome.sequence),10,MUTED))
 	if owned:
 		var use: Button = g._action_button("Use as a parent",func(): g._breed_from(id),"next_cross",id)
-		use.disabled = not p.get("mature",false) or p.get("withered",false) or g.sim!=null
+		use.disabled = not p.get("mature",false) or p.get("withered",false)
 		g.reproduction_buttons.append(use)
 		g.modal_content.add_child(use)
 	elif str(g.state.expedition.get("active_encounter",{}).get("plant",{}).get("id",""))==id:
@@ -359,7 +370,7 @@ static func show_cross(g: Control,id: String,mate_id: String = "",goal_key: Stri
 	var use: Button = g._action_button("Use this pair in the laboratory",func(): g._use_dna_pair(id,mate_id),"dna_use_pair",id)
 	use.set_meta("parent_a",id)
 	use.set_meta("parent_b",mate_id)
-	use.disabled = not g._owns_plant(id) or not p.get("mature",false) or p.get("withered",false) or g.sim!=null
+	use.disabled = not g._owns_plant(id) or not p.get("mature",false) or p.get("withered",false)
 	g.reproduction_buttons.append(use)
 	footer.add_child(use)
 	if p.get("withered",false): footer.add_child(g._wrap("This is an archived plant. Grow its stored seeds to continue these traits in a living parent.",11,MUTED))

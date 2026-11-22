@@ -166,7 +166,7 @@ static func _review(g: Control,cell: int,reference: Variant,feedback: String) ->
 	var plant: Button = _action(g,"Plant here · 10 light",func(): g._sow_at(reference,cell),"plant_seed")
 	plant.set_meta("seed_ref",reference)
 	plant.set_meta("bed_index",cell)
-	plant.disabled = g.sim!=null or int(g.state.resources.sunlight)<10
+	plant.disabled = int(g.state.resources.sunlight)<10
 	plant.add_theme_stylebox_override("normal",g._style(Color("ffbc89"),Color("c9874e"),0,12,12))
 	footer.add_child(plant)
 	g.planting_buttons.append(plant)

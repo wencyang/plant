@@ -152,7 +152,7 @@ static func _inventory(g: Control,kind: String) -> void:
 		var review: Button = _action(g,"See offer · %d coins" % int(quote.get("price",0)),func(): g._review_market_sale(kind,reference),"review_sale")
 		review.set_meta("item_kind",kind)
 		review.set_meta("item_ref",reference)
-		review.disabled = g.sim!=null
+		review.disabled = false
 		card.add_child(review)
 
 static func _shop(g: Control) -> void:
@@ -176,7 +176,7 @@ static func _shop(g: Control) -> void:
 		var buy: Button = _action(g,"Buy · %d coins" % int(stock.cost),func(): g._market_buy(stock_key),"buy")
 		buy.set_meta("stock_key",stock_key)
 		buy.set_meta("market_cost",int(stock.cost))
-		buy.disabled = g.sim!=null or g.state.market_wallet()<int(stock.cost)
+		buy.disabled = g.state.market_wallet()<int(stock.cost)
 		card.add_child(buy)
 		g.market_buttons.append(buy)
 		if g.state.market_wallet()<int(stock.cost): card.add_child(g._wrap("Sell something from your garden to earn more coins.",11,MUTED))
@@ -277,7 +277,7 @@ static func review(g: Control,kind: String,reference: Variant,feedback: String =
 	sell.set_meta("item_kind",kind)
 	sell.set_meta("item_ref",reference)
 	sell.set_meta("quote_id",quote_id)
-	sell.disabled = not quote.get("eligible",false) or g.sim!=null
+	sell.disabled = not quote.get("eligible",false)
 	sell.add_theme_stylebox_override("normal",g._style(Color("ffcf94"),Color("cb9258"),0,12,11))
 	footer.add_child(sell)
 	g.market_buttons.append(sell)

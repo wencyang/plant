@@ -1,12 +1,12 @@
 extends RefCounted
 class_name PlantSpriteAssets
-## Shared, tightly framed botanical originals. Raw PNG loading keeps first-run
+## Shared, tightly framed inked botanical originals. Raw PNG loading keeps first-run
 ## previews working before the editor has imported project assets.
 const PATHS := {
-	"Leaf":"res://assets/plants/leaf.png", "Bloom":"res://assets/plants/bloom.png",
-	"Vine":"res://assets/plants/vine.png", "Root":"res://assets/plants/root.png",
-	"Spore":"res://assets/plants/spore.png", "Toxin":"res://assets/plants/toxin.png",
-	"Parasite":"res://assets/plants/parasite.png", "Carnivorous":"res://assets/plants/carnivorous.png"
+	"Leaf":"res://assets/plants/illustrated/leaf.png", "Bloom":"res://assets/plants/illustrated/bloom.png",
+	"Vine":"res://assets/plants/illustrated/vine.png", "Root":"res://assets/plants/illustrated/root.png",
+	"Spore":"res://assets/plants/illustrated/spore.png", "Toxin":"res://assets/plants/illustrated/toxin.png",
+	"Parasite":"res://assets/plants/illustrated/parasite.png", "Carnivorous":"res://assets/plants/illustrated/carnivorous.png"
 }
 static var _images: Dictionary = {}
 static var _textures: Dictionary = {}
@@ -21,7 +21,7 @@ const TYPE_ORDER := ["Leaf","Bloom","Vine","Root","Spore","Toxin","Parasite","Ca
 # small clipped join is concealed where its new stem enters the host canopy.
 const ORGAN_REGIONS := {
 	"Leaf":Rect2(0.04,0.34,0.69,0.42),
-	"Bloom":Rect2(0.27,0.015,0.55,0.315),
+	"Bloom":Rect2(0.06,0.005,0.88,0.43),
 	"Vine":Rect2(0.03,0.015,0.91,0.75),
 	"Root":Rect2(0.20,0.37,0.68,0.61),
 	"Spore":Rect2(0.01,0.015,0.98,0.40),
@@ -189,23 +189,27 @@ static func _flower_image(petals: int) -> Image:
 	if petals==5: return image_for("Bloom")
 	if _flower_images.has(petals): return _flower_images[petals]
 	var image: Image = image_for("Bloom").duplicate()
-	var offset: Vector2i = _frame_offsets.get("Bloom",Vector2i.ZERO)
-	# The authored blossoms occupy these exact source-frame bounds. Replace only
-	# their petals, leaving the three stems, buds and basal foliage untouched.
-	var flowers := [Rect2i(111,20,186,146),Rect2i(22,129,133,151),Rect2i(225,205,140,130)]
-	for bounds: Rect2i in flowers:
-		bounds.position += offset
-		var center: Vector2 = Vector2(bounds.get_center())
-		var radius: Vector2 = Vector2(bounds.size)*0.53
-		for y in range(maxi(0,bounds.position.y-4),mini(image.get_height(),bounds.end.y+4)):
-			for x in range(maxi(0,bounds.position.x-4),mini(image.get_width(),bounds.end.x+4)):
-				var color: Color = image.get_pixel(x,y)
-				var distance: float = ((Vector2(x,y)-center)/radius).length()
-				color.a *= smoothstep(0.87,1.02,distance)
-				image.set_pixel(x,y,color)
-		var head: Image = _flower_head(petals).duplicate()
-		head.resize(bounds.size.x,bounds.size.y,Image.INTERPOLATE_LANCZOS)
-		image.blend_rect(head,Rect2i(Vector2i.ZERO,head.get_size()),bounds.position)
+	# The illustrated original has one main flower in a normalized organ region.
+	# Work in its own high-resolution frame rather than old atlas pixel bounds.
+	# Stems, folded buds, leaves and rootstock retain their authored anatomy.
+	var region: Rect2 = ORGAN_REGIONS.Bloom
+	var bounds := Rect2i(Vector2i((region.position*Vector2(image.get_size())).floor()),Vector2i((region.size*Vector2(image.get_size())).ceil()))
+	bounds = bounds.intersection(Rect2i(Vector2i.ZERO,image.get_size()))
+	var original: Image = image.get_region(bounds)
+	_isolate_organ(original,"Bloom")
+	var mask: Image = original.duplicate()
+	# Remove only existing flower tissue, including its ink edge. There is no
+	# rectangular cutout through the lower foliage when the petal count changes.
+	for y in bounds.size.y:
+		for x in bounds.size.x:
+			var alpha: float = mask.get_pixel(x,y).a
+			if alpha<=0.0: continue
+			var point: Vector2i = bounds.position+Vector2i(x,y)
+			var color: Color = image.get_pixelv(point)
+			color.a *= 1.0-alpha
+			image.set_pixelv(point,color)
+	var head: Image = _flower_head(petals)
+	image.blend_rect(head,Rect2i(Vector2i.ZERO,head.get_size()),bounds.position)
 	image.fix_alpha_edges()
 	_flower_images[petals] = image
 	return image
@@ -223,10 +227,27 @@ static func _flower_head(petals: int) -> Image:
 		return original
 	var result := Image.create(original.get_width(),original.get_height(),false,Image.FORMAT_RGBA8)
 	result.fill(Color.TRANSPARENT)
-	# Repeat an authored petal sector around the original stamen core. This is
-	# actual N-petal anatomy, retaining its painted veins and stepped silhouette.
-	var center := Vector2(original.get_width()*0.49,original.get_height()*0.49)
-	var radius := Vector2(original.get_width()*0.50,original.get_height()*0.50)
+	# Repeat one inked petal around the authored stamen core. Its direction is
+	# measured from the actual alpha silhouette, so regenerated art can retain
+	# literal N-petal anatomy without matching a historical atlas orientation.
+	var used: Rect2i = original.get_used_rect()
+	var center: Vector2 = Vector2(used.position)+Vector2(used.size)*0.5
+	var radius: Vector2 = Vector2(used.size)*0.5
+	radius.x = maxf(1.0,radius.x)
+	radius.y = maxf(1.0,radius.y)
+	var petal_angle: float = -PI*0.5
+	var best_length: float = 0.0
+	for step in range(120):
+		var angle: float = -PI*0.5+float(step)*TAU/120.0
+		var reach: float = 0.0
+		for sample in range(12,33):
+			var t: float = float(sample)/32.0
+			var point: Vector2i = Vector2i(center+Vector2(cos(angle),sin(angle))*radius*t)
+			if point.x<0 or point.y<0 or point.x>=original.get_width() or point.y>=original.get_height(): continue
+			if original.get_pixelv(point).a>0.45: reach=t
+		if reach>best_length:
+			best_length=reach
+			petal_angle=angle
 	var sector: float = TAU/float(petals)
 	for y in result.get_height():
 		for x in result.get_width():
@@ -234,9 +255,7 @@ static func _flower_head(petals: int) -> Image:
 			var length: float = delta.length()
 			var angle: float = atan2(delta.y,delta.x)+PI*0.5
 			var within: float = wrapf(angle+sector*0.5,0.0,sector)-sector*0.5
-			# The chosen authored petal points upper-left, rather than exactly up.
-			# Align to its center so each sector contributes one complete petal.
-			var source_angle: float = within*float(petals)/5.0-2.02
+			var source_angle: float = within*float(petals)/5.0+petal_angle
 			var point: Vector2 = center+Vector2(cos(source_angle),sin(source_angle))*radius*length
 			var sampled := Color.TRANSPARENT
 			if point.x>=0 and point.y>=0 and point.x<original.get_width() and point.y<original.get_height(): sampled = original.get_pixel(roundi(point.x),roundi(point.y)) if roundi(point.x)<original.get_width() and roundi(point.y)<original.get_height() else Color.TRANSPARENT
@@ -268,7 +287,12 @@ static func _isolate_organ(image: Image,organ_type: String) -> void:
 			if color.a<=0: continue
 			var uv := Vector2(float(x)/maxi(1,width-1),float(y)/maxi(1,height-1))
 			var alpha: float = 1.0
-			if organ_type=="Vine":
+			if organ_type=="Bloom":
+				# The main flower's full five-point outline belongs to this organ.
+				# An ellipse clips petal tips and leaves a ghost five-petal outline
+				# behind when the inherited petal count replaces the original head.
+				alpha = 1.0
+			elif organ_type=="Vine":
 				alpha = smoothstep(0.0,0.04,uv.x)*smoothstep(0.0,0.04,1.0-uv.x)*(1.0-smoothstep(0.88,1.0,uv.y))
 			elif organ_type=="Root":
 				alpha = smoothstep(0.0,0.07,uv.y)
@@ -307,14 +331,15 @@ static func _tint_organ(image: Image,target: Color) -> void:
 			image.set_pixel(x,y,result)
 
 static func _branch(image: Image,start: Vector2,finish: Vector2,color: Color,width: float,side: float) -> void:
-	var previous: Vector2 = start
+	var points: Array[Vector2]=[start]
 	for i in range(1,51):
 		var t: float = float(i)/50.0
-		var point: Vector2 = start.lerp(finish,t)+Vector2(side*sin(t*PI)*18,0)
-		_line(image,previous,point,Color("203b2c"),width+3)
-		_line(image,previous,point,color,width)
-		_line(image,previous+Vector2(-1,0),point+Vector2(-1,0),color.lightened(0.20),1.5)
-		previous = point
+		points.append(start.lerp(finish,t)+Vector2(side*sin(t*PI)*18,0))
+	# Complete each ink/fill pass before the next. Drawing every short outlined
+	# segment separately leaves dark crossbars where adjacent segments overlap.
+	for i in range(1,points.size()): _line(image,points[i-1],points[i],Color("203b2c"),width+3)
+	for i in range(1,points.size()): _line(image,points[i-1],points[i],color,width)
+	for i in range(1,points.size()): _line(image,points[i-1]+Vector2(-1,0),points[i]+Vector2(-1,0),color.lightened(0.20),1.5)
 
 static func _line(image: Image,start: Vector2,finish: Vector2,color: Color,width: float) -> void:
 	var count: int = maxi(1,ceili(start.distance_to(finish)))

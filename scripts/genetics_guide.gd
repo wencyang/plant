@@ -5,7 +5,7 @@ class_name GeneticsGuide
 const DNA = preload("res://scripts/plant_dna.gd")
 const Art = preload("res://scripts/plant_sprite_assets.gd")
 const KEYS := ["color","accent","pattern","petals","shape","form","texture","glow","size"]
-const LABELS := {"color":"Main color","accent":"Marking color","pattern":"Pattern","petals":"Flower petals","shape":"Leaf and petal shape","form":"Plant shape","texture":"Surface","glow":"Glow","size":"Size","skill":"Battle skill"}
+const LABELS := {"color":"Main color","accent":"Marking color","pattern":"Pattern","petals":"Flower petals","shape":"Leaf and petal shape","form":"Plant shape","texture":"Surface","glow":"Glow","size":"Size","skill":"Inherited talent"}
 const DEFAULTS := {"color":"829d80","accent":"c4d2a1","pattern":"Solid","petals":5,"shape":"Pointed","form":"Upright","texture":"Matte","glow":"None","size":"Standard"}
 const PALETTE := {
 	"829d80":"Sage green", "d7a06d":"Warm amber", "9dbcb2":"Silver sage", "aa829b":"Soft mauve",
@@ -14,25 +14,37 @@ const PALETTE := {
 	"e2c997":"Honey gold", "cfb0b5":"Rose pink", "d5ba8e":"Golden sand", "add7cd":"Sea glass",
 	"c275b1":"Orchid pink", "193632":"Deep teal", "e8daca":"Ivory", "6b9368":"Fern green"
 }
+const TALENT_NAMES := {
+	"Canopy Shade":"Leafy Shade", "Bloom Burst":"Sunny Bloom", "Entangle":"Climbing Spirit", "Root Network":"Water Keeper",
+	"Spore Cloud":"Spore Sparkles", "Toxin Seep":"Wild Perfume", "Parasitic Tendril":"Trail Companion", "Devour":"Big Appetite"
+}
 const SKILL_EFFECTS := {
-	"Canopy Shade":"Slows nearby enemy growth with shade.",
-	"Bloom Burst":"Gathers flowering energy faster in battle.",
-	"Entangle":"Restrains an enemy and slows its next action.",
-	"Root Network":"Restores vitality through connected roots.",
-	"Spore Cloud":"Spreads damage to a nearby enemy.",
-	"Toxin Seep":"Leaves a toxin that damages the enemy over time.",
-	"Parasitic Tendril":"Drains an enemy and restores the plant's vitality.",
-	"Devour":"Consumes a weakened enemy and restores vitality."
+	"Canopy Shade":"A talent for leafy canopies, carried in this plant's family.",
+	"Bloom Burst":"A bright flowering personality that can return in its descendants.",
+	"Entangle":"An adventurous climbing personality, passed through the family tree.",
+	"Root Network":"A root-loving personality, inherited from its family.",
+	"Spore Cloud":"A whimsical spore personality that can travel through a lineage.",
+	"Toxin Seep":"A bold wild personality, inspired by aromatic plants.",
+	"Parasitic Tendril":"A wandering tendril personality, shared through its lineage.",
+	"Devour":"A hungry little personality inspired by carnivorous plants."
 }
-const STAT_LABELS := {"vitality":"Vitality","growth":"Growth speed","toxin":"Toxin strength","root":"Root strength","bloom":"Flowering energy","shade":"Shade strength"}
+const STAT_LABELS := {"vitality":"Resilience potential","growth":"Growth potential","toxin":"Chemistry potential","root":"Root potential","bloom":"Flowering potential","shade":"Canopy potential"}
 const STAT_EFFECTS := {
-	"vitality":"How much damage the plant can survive.",
-	"growth":"How quickly the plant acts in battle.",
-	"toxin":"Strength of toxin and spore effects.",
-	"root":"Strength of entangling, roots, and draining.",
-	"bloom":"How quickly flowering energy gathers.",
-	"shade":"How strongly the plant suppresses enemy growth."
+	"vitality":"Inherited resilience potential contributes to the market's vigor appraisal. Care tools set this individual's extra lifespan.",
+	"growth":"Inherited growth potential contributes to the market's vigor appraisal. Seedlings still use the shared growth timer.",
+	"toxin":"Inherited chemistry potential describes this plant's wild character and contributes to its vigor appraisal.",
+	"root":"Inherited root potential contributes to the market's vigor appraisal. Compost changes this individual's weight.",
+	"bloom":"Inherited flowering potential contributes to the market's vigor appraisal. Fruit still uses its normal ripening timer.",
+	"shade":"Inherited canopy potential contributes to the market's vigor appraisal. Size genes and care determine its physical size."
 }
+
+static func talent_name(skill: String) -> String:
+	return str(TALENT_NAMES.get(skill,skill))
+
+static func talent_names(skills: Array) -> Array[String]:
+	var result: Array[String] = []
+	for skill: Variant in skills: result.append(talent_name(str(skill)))
+	return result
 
 static func color_for(value: Variant) -> Color:
 	if value is Color: return value
@@ -54,6 +66,7 @@ static func trait_value(key: String,value: Variant) -> String:
 	if value==null or str(value) in ["","?"]: return "Unknown"
 	if key in ["color","accent"]: return color_name(value)
 	if key=="petals": return "%d petals" % int(value)
+	if key=="skill": return talent_name(str(value))
 	if key=="glow" and str(value)=="None": return "No glow"
 	if key=="size": return {"Small":"Small plant","Standard":"Medium plant","Large":"Large plant"}.get(str(value),str(value))
 	if key=="form": return {"Upright":"Upright","Trailing":"Trailing","Rosette":"Low rosette","Climbing":"Climbing"}.get(str(value),str(value))
@@ -127,8 +140,8 @@ static func _explanation(p: Dictionary,key: String,shown: Variant) -> String:
 		"size": return "Changes how much space the plant occupies in the garden."
 		"skill":
 			var effects: Array[String] = []
-			for skill: String in p.get("skills",[]): effects.append(str(SKILL_EFFECTS.get(skill,"An inherited ability used in battle.")))
-			return " ".join(effects)
+			for skill: String in p.get("skills",[]): effects.append(str(SKILL_EFFECTS.get(skill,"An inherited talent recorded in this plant's family.")))
+			return " ".join(effects)+" Talents describe inherited character; care tools guide growth and lifespan."
 	return ""
 
 static func hidden_goal(p: Dictionary,key: String = "pattern") -> String:
@@ -158,7 +171,7 @@ static func _hidden_origin(p: Dictionary,key: String,a: Dictionary,b: Dictionary
 static func origin_note(p: Dictionary,key: String) -> String:
 	var source: Dictionary = p.get("skill_sources",{}) if key=="skill" else p.get("gene_sources",{}).get(key,{})
 	if source.is_empty(): return "The exact parental source was not recorded." if not p.get("parents",[]).is_empty() else "A founding trait, before this lineage was crossed."
-	if key=="skill": return "Skill alleles from %s: %s; from %s: %s." % [_parent_name(p,str(source.get("parent_a","")),"Mother"),str(source.get("allele_a","Unknown")),_parent_name(p,str(source.get("parent_b","")),"Father"),str(source.get("allele_b","Unknown"))]
+	if key=="skill": return "Talent copies from %s: %s; from %s: %s." % [_parent_name(p,str(source.get("parent_a","")),"Mother"),talent_name(str(source.get("allele_a","Unknown"))),_parent_name(p,str(source.get("parent_b","")),"Father"),talent_name(str(source.get("allele_b","Unknown")))]
 	var origin: String = str(source.get("expressed_origin",""))
 	if origin=="founder": return "A founding trait, before this lineage was crossed."
 	if origin=="mutation": return "A mutation created the shown trait; the earlier trait remains carried."
@@ -188,7 +201,7 @@ static func trait_summary(p: Dictionary) -> Array[Dictionary]:
 		if key=="accent": applies = str(_gene(p,"pattern").get("dominant","Solid"))!="Solid" or str(_gene(p,"glow").get("dominant","None"))!="None" or str(_gene(p,"texture").get("dominant","Matte"))=="Translucent"
 		var entry: Dictionary = {"key":key,"label":LABELS[key],"visible":trait_value(key,shown),"hidden":trait_value(key,hidden),"explanation":_explanation(p,key,shown),"appearance_applies":applies,"expressed_raw":shown,"carried_raw":hidden,"has_hidden":_normalized(key,shown)!=_normalized(key,hidden),"is_fixed":_normalized(key,shown)==_normalized(key,hidden),"carried_active":key=="skill" and p.get("skills",[]).has(str(hidden)),"transmission":transmission(p,key),"origin":origin_note(p,key),"hint":hidden_goal(p,key)}
 		if key in ["color","accent"]: entry["visible_color"]=color_for(shown); entry["hidden_color"]=color_for(hidden)
-		if key=="skill": entry.visible = " + ".join(PackedStringArray(p.get("skills",[str(shown)])))
+		if key=="skill": entry.visible = " + ".join(PackedStringArray(talent_names(p.get("skills",[str(shown)]))))
 		if key=="petals" and not _host_has_flowers(p) and applies: entry.visible = "%d starburst rays" % int(shown)
 		result.append(entry)
 	return result
@@ -220,7 +233,7 @@ static func _add_skill(distribution: Dictionary,skills: Array,probability: float
 	var ordered: Array = skills.duplicate()
 	ordered.sort()
 	var identity: String = DNA.canonical(ordered)
-	if not distribution.has(identity): distribution[identity] = {"value":" + ".join(PackedStringArray(ordered)),"raw":ordered,"probability":0.0}
+	if not distribution.has(identity): distribution[identity] = {"value":" + ".join(PackedStringArray(talent_names(ordered))),"raw":ordered,"probability":0.0}
 	distribution[identity].probability = float(distribution[identity].probability)+probability
 
 static func skill_outcomes(a: Dictionary,b: Dictionary) -> Array[Dictionary]:

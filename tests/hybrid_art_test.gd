@@ -111,10 +111,6 @@ func run() -> void:
 	var withered: Image = await capture(aging)
 	check(hash(withered.get_data())!=hash(aged.get_data()),"Natural withering differs from aging")
 	check(coverage(withered)<coverage(pure)*0.8,"Natural withering visibly collapses the dried crown")
-	portrait.alive = false
-	var battle_withered: Image = await capture(base("Leaf"))
-	check(hash(battle_withered.get_data())!=hash(withered.get_data()),"Temporary battle withering and natural death remain visually distinct")
-	portrait.alive = true
 	for i in range(70):
 		var specimen: Dictionary = base("Leaf",i)
 		specimen.lineage_mix = {"Leaf":1.0-0.1-float(i)*0.01,"Bloom":0.1+float(i)*0.01}

@@ -5,8 +5,10 @@ class_name Soundscape
 signal settings_changed()
 const DEFAULT_VOLUMES := {"master":0.65,"music":0.45,"ambience":0.40,"effects":0.65}
 const CHANNELS := ["master","music","ambience","effects"]
-const EFFECTS := ["ui","back","step","grass","encounter","observe","collect_success","collect_fail","seed","breed","graft","mutate","bloom","battle_start","battle_win","battle_lose"]
-const EFFECT_GAINS := {"ui":0.68,"back":0.72,"step":0.42,"grass":0.44,"encounter":0.83,"observe":0.75,"collect_success":0.9,"collect_fail":0.75,"seed":0.76,"breed":0.85,"graft":0.78,"mutate":0.8,"bloom":0.9,"battle_start":0.85,"battle_win":0.9,"battle_lose":0.8}
+const EFFECTS := ["ui","back","step","grass","encounter","observe","collect_success","collect_fail","seed","breed","graft","mutate","bloom"]
+const EFFECT_GAINS := {"ui":0.68,"back":0.72,"step":0.42,"grass":0.44,"encounter":0.83,"observe":0.75,"collect_success":0.9,"collect_fail":0.75,"seed":0.76,"breed":0.85,"graft":0.78,"mutate":0.8,"bloom":0.9}
+const MUSIC := {"garden":"music_garden","wild":"music_wild"}
+const EVENT_ALIASES := {"fair_claim":"collect_success","fair_ribbon":"bloom"}
 const FX_VOICES: int = 8
 var settings_path: String = "user://sound_v1.cfg"
 var preview_muted: bool = false
@@ -60,7 +62,7 @@ func _can_run() -> bool:
 	return _operational and not preview_muted and is_inside_tree()
 
 func set_context(next_context: String, next_biome: String = "") -> void:
-	if next_context not in ["garden","wild","battle"]: next_context = "garden"
+	if not MUSIC.has(next_context): next_context = "garden"
 	var different: bool = next_context != context
 	context = next_context
 	biome = next_biome
@@ -77,6 +79,7 @@ func _any_music_playing() -> bool:
 	return false
 
 func _start_music(next_context: String, seconds: float) -> void:
+	if not MUSIC.has(next_context): next_context="garden"
 	if not _can_run() or _music.size() != 2: return
 	if is_instance_valid(_transition): _transition.kill()
 	var destination: int = -1
@@ -88,7 +91,7 @@ func _start_music(next_context: String, seconds: float) -> void:
 	var next_player: AudioStreamPlayer = _music[destination]
 	if next_player.get_meta("context","") != next_context:
 		next_player.stop()
-		next_player.stream = _stream("music_"+next_context,true)
+		next_player.stream = _stream(str(MUSIC[next_context]),true)
 		next_player.set_meta("context",next_context)
 		_music_levels[destination] = 0.0
 	if next_player.stream == null: return
@@ -113,6 +116,7 @@ func _finish_transition(destination: int) -> void:
 		if i != destination and _music_levels[i] < 0.001: _music[i].stop()
 
 func play(event: String) -> void:
+	event=str(EVENT_ALIASES.get(event,event))
 	if not _can_run() or _muted or event not in EFFECTS: return
 	var now: int = Time.get_ticks_msec()
 	var limit: int = 120 if event in ["step","grass"] else (40 if event == "ui" else 70)
@@ -166,7 +170,7 @@ func _db(gain: float) -> float:
 func _apply_volumes() -> void:
 	for i in range(_music.size()): _music[i].volume_db = _db(_channel_gain("music")*_music_levels[i])
 	if is_instance_valid(_ambience):
-		var habitat_gain: float = 0.75 if context == "garden" else (0.45 if context == "battle" else 1.0)
+		var habitat_gain: float = 0.75 if context == "garden" else 1.0
 		_ambience.volume_db = _db(_channel_gain("ambience")*habitat_gain)
 	for player in _effects:
 		var event: String = str(player.get_meta("event",""))

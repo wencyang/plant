@@ -1,7 +1,7 @@
 extends Control
 class_name Wilderness
-## Original handheld-style field exploration. The map and collisions share one
-## deterministic tile field; finding a plant never changes the home garden.
+## A hand-inked botanical landscape above a deterministic walking field.
+## Scenery, plant habitat cues and collision all retain stable world coordinates.
 signal returned_home()
 signal encounter_requested(biome: String, site_id: String)
 signal supplies_requested()
@@ -15,6 +15,10 @@ const CHUNK_TILES := Vector2i(16,12)
 const CHUNK_LIMIT: int = 16
 const AtlasCanvas = preload("res://scripts/world_atlas.gd")
 const BotanicalArt = preload("res://scripts/plant_portrait.gd")
+const LandscapeArt = preload("res://scripts/landscape_art.gd")
+const HabitatScene = preload("res://scripts/habitat_scene.gd")
+const Habitat = preload("res://scripts/habitat_catalog.gd")
+const LANDSCAPE_PATHS: Dictionary = {"Mosswood":"forest","Amber Hollow":"amber","Sporefen":"sporefen","Sunken Glade":"glasshouse","Glassfall Coast":"coast","Ember Ridge":"canyon","Moonfen":"moonfen","Ancient Grove":"ancient"}
 const TILE: int = 16
 const DETAIL: int = 6
 const STEP_TIME: float = 0.15
@@ -237,6 +241,20 @@ var _trees: Array[Vector2i] = []
 var _blocked: Dictionary = {}
 var _camera := Vector2.ZERO
 var _map_rect := Rect2()
+var _vista_rect := Rect2()
+var _vista: TextureRect
+var _vista_title: Label
+var _vista_note: Label
+var _vista_caption: PanelContainer
+var _landscape := LandscapeArt.new()
+var _wash_noise := FastNoiseLite.new()
+var _warp_noise := FastNoiseLite.new()
+const GROUND_PIGMENTS: Dictionary = {
+	"Mosswood":Color("b4c293"),"Amber Hollow":Color("c9bd8c"),
+	"Sporefen":Color("9ebba3"),"Sunken Glade":Color("a9c5b7"),
+	"Glassfall Coast":Color("c3d1ae"),"Moonfen":Color("a3c1c0"),
+	"Ember Ridge":Color("c9927b"),"Ancient Grove":Color("91ae8f")}
+
 var _pixel_scale: float = 3.0
 var _time: float = 0
 var _step_cooldown: float = 0
@@ -265,6 +283,8 @@ var _sprite_image: Image
 var _sprite_cache: Dictionary = {}
 var _wild_previews: Dictionary = {}
 var _wild_preview_generation: String = ""
+var _wild_layer: Control
+var _wild_portraits: Dictionary = {}
 var map_build_msec: float = 0.0
 
 func _ready() -> void:
@@ -282,6 +302,13 @@ func _ready() -> void:
 	_build_map()
 	if not is_walkable(player_tile): player_tile = Vector2i(15,18)
 	_build_ui()
+	_wild_layer=Control.new()
+	_wild_layer.name="Living field specimens"
+	_wild_layer.mouse_filter=Control.MOUSE_FILTER_IGNORE
+	_wild_layer.clip_contents=true
+	add_child(_wild_layer)
+	move_child(_wild_layer,0)
+	_build_vista()
 	_build_atlas_ui()
 	resized.connect(_layout)
 	_layout()
@@ -400,6 +427,54 @@ func _build_ui() -> void:
 	_legend_label = _label("WASD / arrows to stroll · E to meet a plant · M for map · Tap to walk",12,Color("8eaa94"))
 	column.add_child(_legend_label)
 
+func _build_vista() -> void:
+	_vista=TextureRect.new()
+	_vista.name="HabitatLandscape"
+	_vista.set_meta("habitat_landscape",true)
+	_vista.mouse_filter=Control.MOUSE_FILTER_IGNORE
+	_vista.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+	_vista.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_vista.texture_filter=CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	add_child(_vista)
+	_vista_caption=PanelContainer.new()
+	_vista_caption.mouse_filter=Control.MOUSE_FILTER_IGNORE
+	var caption_style := StyleBoxFlat.new()
+	caption_style.bg_color=Color(0.10,0.20,0.19,0.80)
+	caption_style.content_margin_left=14;caption_style.content_margin_right=14
+	caption_style.content_margin_top=7;caption_style.content_margin_bottom=7
+	_vista_caption.add_theme_stylebox_override("panel",caption_style)
+	_vista.add_child(_vista_caption)
+	var caption_text := VBoxContainer.new()
+	caption_text.mouse_filter=Control.MOUSE_FILTER_IGNORE
+	caption_text.add_theme_constant_override("separation",2)
+	_vista_caption.add_child(caption_text)
+	_vista_title=_label("",19,Color("fff4ce"))
+	_vista_title.mouse_filter=Control.MOUSE_FILTER_IGNORE
+	_vista_title.add_theme_color_override("font_color",Color("fff4ce"))
+	caption_text.add_child(_vista_title)
+	_vista_note=_label("",12,Color("e4e9d1"))
+	_vista_note.mouse_filter=Control.MOUSE_FILTER_IGNORE
+	_vista_note.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+	_vista_note.add_theme_color_override("font_color",Color("e4e9d1"))
+	caption_text.add_child(_vista_note)
+	_update_vista()
+
+func landscape_texture(biome: String) -> Texture2D:
+	# Share the panorama, field-guide and encounter cache. The scene loader also
+	# supports raw source PNGs before an editor import, and packed exported art.
+	return HabitatScene.texture_for(biome)
+
+func _update_vista() -> void:
+	if not is_instance_valid(_vista):return
+	var biome: String=biome_at(player_tile)
+	_vista.texture=landscape_texture(biome)
+	_vista.set_meta("habitat_key",biome)
+	_vista.set_meta("art_source",str(LANDSCAPE_PATHS.get(biome,"forest")))
+	_vista_title.text=biome
+	var region: Dictionary=Habitat.region(biome)
+	_vista_note.text=str(region.get("landscape",""))
+	_vista.visible=_vista.texture!=null
+
 func _layout() -> void:
 	var compact: bool = size.x < 700
 	_pixel_scale = 2.0 if compact else clampf(size.x/640.0,2.5,3.5)
@@ -423,7 +498,19 @@ func _fit_panels() -> void:
 	_footer.size = Vector2(maxf(1,size.x-margin*2),164 if compact else 152)
 	_footer.position = Vector2(margin,size.y-_footer.size.y-margin)
 	var field_width: float = minf(size.x-margin*2,MAP_WIDTH*TILE*_pixel_scale)
-	_map_rect = Rect2(Vector2((size.x-field_width)*0.5,_header.position.y+_header.size.y+8),Vector2(maxf(1,field_width),maxf(1,_footer.position.y-_header.position.y-_header.size.y-16)))
+	var field_top: float=_header.position.y+_header.size.y+8
+	var field_height: float=maxf(1,_footer.position.y-field_top-8)
+	var vista_height: float=clampf(field_height*0.28,92,210) if is_instance_valid(_vista) and _vista.texture!=null else 0.0
+	if compact and vista_height>0:vista_height=minf(110,field_height*0.25)
+	_vista_rect=Rect2(Vector2((size.x-field_width)*0.5,field_top),Vector2(field_width,vista_height))
+	if is_instance_valid(_vista):
+		_vista.position=_vista_rect.position;_vista.size=_vista_rect.size
+		_vista_caption.position=Vector2(0,maxf(0,vista_height-64))
+		_vista_caption.size=Vector2(field_width,64)
+		_vista_title.add_theme_font_size_override("font_size",16 if compact else 21)
+		_vista_note.add_theme_font_size_override("font_size",11 if compact else 12)
+	var map_top: float=field_top+vista_height+(8 if vista_height>0 else 0)
+	_map_rect = Rect2(Vector2((size.x-field_width)*0.5,map_top),Vector2(maxf(1,field_width),maxf(1,_footer.position.y-map_top-8)))
 
 func refresh() -> void:
 	if not is_instance_valid(_resources_label): return
@@ -433,12 +520,14 @@ func refresh() -> void:
 		_resources_label.text = "%d KITS / %d FOUND" % [int(state.field_kits),collected]
 	var biome: String = biome_at(player_tile)
 	_location_label.text = biome.to_upper()+" / ROUTE "+"%02d" % (["Mosswood","Amber Hollow","Sporefen","Sunken Glade","Glassfall Coast","Ember Ridge","Moonfen","Ancient Grove"].find(biome)+1)
+	_update_vista()
 	var site: Dictionary = nearest_site()
+	var patch: Dictionary=Habitat.patch(str(site.biome),str(site.id)) if not site.is_empty() else {}
 	var distance: int = _distance(player_tile,Vector2i(site.x,site.y)) if not site.is_empty() else 0
 	if not site.is_empty() and distance <= 2:
-		_target_label.text = "WILD GROWTH / " + str(site.biome).to_upper()
+		_target_label.text = "%s / %s" % [str(patch.get("name","Wild growth")),str(patch.get("primary_species",""))]
 		_action_button.text = "Investigate [E]"
-		_hint_label.text = "A new plant pal! Bring a field kit and say hello."
+		_hint_label.text = str(patch.get("clue","A new plant pal! Bring a field kit and say hello."))
 	elif _distance(player_tile,HOME) <= 2:
 		_target_label.text = "YOUR CONSERVATORY / HOME"
 		_action_button.text = "Return home [E]"
@@ -447,7 +536,7 @@ func refresh() -> void:
 		var camp: Dictionary = _nearby_landmark()
 		_target_label.text = str(camp.name).to_upper()+" / FIELD CAMP" if not camp.is_empty() else "%s / %d steps to wild growth" % [biome.to_upper(),distance]
 		_action_button.text = "Rest at camp [E]" if not camp.is_empty() else "Look around [E]"
-		_hint_label.text = "Eight habitats, so many plant pals! Open the map to pick your next adventure."
+		_hint_label.text = str(patch.get("clue","Eight habitats, so many plant pals! Open the map to pick your next adventure."))
 	_action_button.disabled = waiting
 	if is_instance_valid(_atlas_canvas): _atlas_canvas.queue_redraw()
 	queue_redraw()
@@ -629,6 +718,14 @@ func _carve_line(a: Vector2i,b: Vector2i) -> void:
 
 func _build_map() -> void:
 	var build_started: int = Time.get_ticks_usec()
+	_wash_noise.seed=map_seed
+	_wash_noise.noise_type=FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	_wash_noise.frequency=0.014
+	_wash_noise.fractal_octaves=3
+	_warp_noise.seed=map_seed+771
+	_warp_noise.noise_type=FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	_warp_noise.frequency=0.004
+	_warp_noise.fractal_octaves=2
 	_terrain.resize(MAP_WIDTH*MAP_HEIGHT)
 	_trees.clear()
 	_blocked.clear()
@@ -676,9 +773,9 @@ func _build_map() -> void:
 	_build_atlas_texture()
 	map_build_msec = float(Time.get_ticks_usec()-build_started)/1000.0
 
-func _visible_chunks() -> Array[Vector2i]:
+func _visible_chunks(padding: float = 0.0) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
-	var visible := Rect2(_camera,_map_rect.size/maxf(1,_pixel_scale))
+	var visible := Rect2(_camera,_map_rect.size/maxf(1,_pixel_scale)).grow(padding)
 	var first := Vector2i(floori(visible.position.x/(CHUNK_TILES.x*TILE)),floori(visible.position.y/(CHUNK_TILES.y*TILE)))
 	var last := Vector2i(floori((visible.end.x-1)/(CHUNK_TILES.x*TILE)),floori((visible.end.y-1)/(CHUNK_TILES.y*TILE)))
 	for y in range(maxi(0,first.y),mini(ceili(float(MAP_HEIGHT)/CHUNK_TILES.y)-1,last.y)+1):
@@ -687,7 +784,11 @@ func _visible_chunks() -> Array[Vector2i]:
 
 func _warm_visible_chunks() -> void:
 	if _map_rect.size.x<1: return
-	for chunk in _visible_chunks(): _get_chunk(chunk)
+	# Keep one walking tile beyond the screen warm. Crossing a chunk seam
+	# should never turn a held walking key into a frame blocked on new paint.
+	var warm: Array[Vector2i]=_visible_chunks(TILE)
+	if warm.size()>CHUNK_LIMIT:warm=_visible_chunks()
+	for chunk in warm: _get_chunk(chunk)
 
 func _get_chunk(chunk: Vector2i) -> ImageTexture:
 	if _chunk_cache.has(chunk):
@@ -700,20 +801,28 @@ func _get_chunk(chunk: Vector2i) -> ImageTexture:
 	var limit := Vector2i(mini(CHUNK_TILES.x,MAP_WIDTH-origin.x),mini(CHUNK_TILES.y,MAP_HEIGHT-origin.y))
 	_chunk_origin = origin*TILE-Vector2i.ONE
 	_map_image = Image.create((limit.x*TILE+2)*DETAIL,(limit.y*TILE+2)*DETAIL,false,Image.FORMAT_RGBA8)
-	_map_image.fill(Color("8abe68"))
+	_paint_ground_wash()
+	_landscape.canvas(_map_image,Vector2(_chunk_origin),DETAIL)
 	for y in range(maxi(0,origin.y-1),mini(MAP_HEIGHT,origin.y+limit.y+1)):
 		for x in range(maxi(0,origin.x-1),mini(MAP_WIDTH,origin.x+limit.x+1)):
 			_paint_tile(Vector2i(x,y))
 			_paint_tile_detail(Vector2i(x,y))
-	var tree_bounds := Rect2i(origin-Vector2i(3,3),limit+Vector2i(6,6))
+	var tree_bounds := Rect2i(origin-Vector2i(4,4),limit+Vector2i(8,8))
 	for tile: Vector2i in _trees:
 		if tree_bounds.has_point(tile): _paint_tree(tile); _paint_tree_detail(tile)
+	# Each encounter has a grounded visual clue matching its actual ecology.
+	for site: Dictionary in SITES:
+		var site_tile := Vector2i(site.x,site.y)
+		if tree_bounds.has_point(site_tile):
+			var patch: Dictionary=Habitat.patch(str(site.biome),str(site.id))
+			_landscape.patch(Vector2(site_tile*TILE)+Vector2(8,10),str(patch.terrain))
 	if tree_bounds.has_point(Vector2i(15,20)): _paint_home(); _paint_home_detail()
 	for landmark: Dictionary in LANDMARKS:
 		if landmark.id != "home" and tree_bounds.has_point(Vector2i(landmark.x,landmark.y)): _paint_camp(landmark)
 	_map_image.generate_mipmaps()
 	var texture := ImageTexture.create_from_image(_map_image)
 	_map_image = null
+	_landscape.image = null
 	_map_texture = texture
 	while _chunk_cache.size() >= CHUNK_LIMIT: _chunk_cache.erase(_chunk_cache.keys()[0])
 	_chunk_cache[chunk] = texture
@@ -724,121 +833,159 @@ func _get_chunk(chunk: Vector2i) -> ImageTexture:
 func _rect(x: int,y: int,w: int,h: int,color: Color) -> void:
 	_fine_rect(x*DETAIL,y*DETAIL,w*DETAIL,h*DETAIL,color)
 
+func _ground_pigment(world_point: Vector2) -> Color:
+	var warp := Vector2(_warp_noise.get_noise_2d(world_point.x,world_point.y),_warp_noise.get_noise_2d(world_point.x+717,world_point.y-913))*35.0
+	var q: Vector2=world_point+warp
+	var pigment: Color=GROUND_PIGMENTS[biome_at(Vector2i((q/TILE).floor()))]
+	pigment*=2.0
+	var total: float=2.0
+	for distance in [14.0,32.0]:
+		var strength: float=0.8 if distance<20 else 0.35
+		for side in [Vector2.UP,Vector2.DOWN,Vector2.LEFT,Vector2.RIGHT]:
+			var neighbor: String=biome_at(Vector2i(((q+side*distance)/TILE).floor()))
+			pigment+=(GROUND_PIGMENTS[neighbor] as Color)*strength
+			total+=strength
+	var wash: float=_wash_noise.get_noise_2d(world_point.x,world_point.y)
+	var light: float=1.0+wash*0.095
+	return Color(pigment.r/total*light,pigment.g/total*light,pigment.b/total*light,1.0)
+
+func _paint_ground_wash() -> void:
+	# A continuous watercolor wash is sampled in world space then smoothly interpolated
+	# by the image renderer. It has no tile squares, repeated ground texture, or
+	# palette rectangles; seam gutters share the exact same pigment samples.
+	var dimensions: Vector2i=_map_image.get_size()
+	var source := Image.create(ceili(dimensions.x/(DETAIL*8.0))+1,ceili(dimensions.y/(DETAIL*8.0))+1,false,Image.FORMAT_RGBA8)
+	for y in range(source.get_height()):
+		for x in range(source.get_width()):
+			source.set_pixel(x,y,_ground_pigment(Vector2(_chunk_origin)+Vector2(x*8,y*8)))
+	source.resize(dimensions.x,dimensions.y,Image.INTERPOLATE_BILINEAR)
+	_map_image.blit_rect(source,Rect2i(Vector2i.ZERO,dimensions),Vector2i.ZERO)
+
 func _paint_tile(tile: Vector2i) -> void:
-	var x: int = tile.x*TILE
-	var y: int = tile.y*TILE
-	var value: int = _hash(tile.x,tile.y)
-	var biome: String = biome_at(tile)
-	var palettes: Dictionary = {
-		"Mosswood":[Color("7bb865"),Color("8bc573"),Color("669d4e"),Color("bddc85")],
-		"Amber Hollow":[Color("c1bb6a"),Color("d0c876"),Color("9ea153"),Color("e5dd93")],
-		"Sporefen":[Color("72af99"),Color("82bba5"),Color("5b9381"),Color("b6d8a5")],
-		"Sunken Glade":[Color("7db9bf"),Color("8cc7c7"),Color("58969f"),Color("beded1")],
-		"Glassfall Coast":[Color("add2a1"),Color("bbdcad"),Color("86b58b"),Color("e2edbd")],
-		"Moonfen":[Color("95b9cd"),Color("a7cad7"),Color("7293ac"),Color("d6e3e3")],
-		"Ember Ridge":[Color("c9ac72"),Color("d8bc83"),Color("aa8b59"),Color("ecd29a")],
-		"Ancient Grove":[Color("6da367"),Color("7db472"),Color("518350"),Color("b7d697")]
-	}
-	var palette: Array = palettes[biome]
-	var terrain: int = _terrain[tile.y*MAP_WIDTH+tile.x]
-	if terrain == 2:
-		_rect(x,y,TILE,TILE,Color("68b7c5"))
-		_rect(x,y+2,TILE,2,Color("7dc9d1"))
-		_rect(x+value%7,y+8,6,1,Color("b3e7e2"))
-		_rect(x+((value/7)%8),y+12,4,1,Color("4e9eaf"))
-		if not _water(tile+Vector2i.UP): _rect(x,y,TILE,2,Color("b7d295"))
-		if not _water(tile+Vector2i.LEFT): _rect(x,y,2,TILE,Color("b7d295"))
-		if value%5==0:
-			_rect(x+5,y+5,5,3,Color("82b68d"))
-			_rect(x+6,y+4,3,1,Color("b7d59d"))
+	var p := Vector2(tile*TILE)
+	var biome: String=biome_at(tile)
+	var ground: Color=_ground_pigment(p+Vector2(8,8))
+	var path_color := Color("ded1a8")
+	if biome in ["Amber Hollow","Ember Ridge"]:path_color=Color("dfc09a")
+	elif biome in ["Sunken Glade","Moonfen"]:path_color=Color("d7d6b9")
+	var terrain: int=_terrain_at(tile)
+	if terrain==2:
+		var water := Color("7eb6ac") if biome!="Ember Ridge" else Color("95c8ac")
+		_landscape.rect(Rect2(p,Vector2(TILE,TILE)),water)
+		for side in [Vector2i.UP,Vector2i.DOWN,Vector2i.LEFT,Vector2i.RIGHT]:
+			if _terrain_at(tile+side)==2:continue
+			var edge: Vector2=p+Vector2(0,1) if side==Vector2i.UP else p+Vector2(0,15)
+			var other: Vector2=edge+Vector2(16,0)
+			if side==Vector2i.LEFT:edge=p+Vector2(1,0);other=edge+Vector2(0,16)
+			if side==Vector2i.RIGHT:edge=p+Vector2(15,0);other=edge+Vector2(0,16)
+			_landscape.line(edge,other,Color("b8d8bb"),1.2)
+			_landscape.line(edge+Vector2(0.3,0.3),other,Color("607f79"),0.20)
 		return
-	_rect(x,y,TILE,TILE,(palette[0] as Color).lerp(palette[1],float(value%5)*0.065))
-	if terrain == 1:
+	if terrain==1:
 		if _water(tile):
-			_rect(x,y,TILE,TILE,Color("b7a16e"))
-			for yy in range(1,16,4):
-				_rect(x,y+yy,TILE,1,Color("e5ce95"))
-				_rect(x+1,y+yy+1,1,2,Color("897c58"))
-		else:
-			_rect(x+1,y+1,14,14,Color("dcc18b"))
-			_rect(x,y+3,16,10,Color("dcc18b"))
-			_rect(x+3,y,10,16,Color("dcc18b"))
-			_rect(x+value%11+2,y+(value/13)%11+2,2,1,Color("f1dba5"))
-			_rect(x+(value/5)%12+1,y+(value/29)%11+2,2,1,Color("bda16e"))
-	else:
-		for i in range(4):
-			var xx: int = x+2+_hash(tile.x,tile.y,i+2)%12
-			var yy: int = y+3+_hash(tile.x,tile.y,i+9)%11
-			_rect(xx,yy,1,2,palette[2])
-			_rect(xx-1,yy-1,1,1,palette[3])
-			_rect(xx+1,yy-2,1,2,palette[3])
-		if value%9 == 0:
-			var c: Color = Color("d2e6b2") if biome=="Sporefen" else Color("f3d78d")
-			_rect(x+5,y+8,2,2,c)
-			_rect(x+6,y+7,1,1,Color("fff0bf"))
-	# The boundary is an irregular, impassable hedge rather than empty void.
+			_landscape.rect(Rect2(p,Vector2(TILE,TILE)),Color("c1aa7f"))
+			for row in range(4):
+				_landscape.line(p+Vector2(0,row*4),p+Vector2(16,row*4),Color("565d4e"),0.35)
+				_landscape.line(p+Vector2(1,row*4+1),p+Vector2(14,row*4+1.5),Color("9c8c6b"),0.16)
+		else:_paint_footpath(tile,p,path_color)
+		return
 	if tile.x==0 or tile.y==0 or tile.x==MAP_WIDTH-1 or tile.y==MAP_HEIGHT-1:
-		_rect(x,y,16,16,Color("64924f"))
-		_rect(x+2,y+2,12,10,Color("78ad5d"))
-		_rect(x+4,y+1,7,2,Color("a8ca79"))
+		_landscape.rect(Rect2(p,Vector2(16,16)),ground.darkened(0.12))
+
+func _paint_footpath(tile: Vector2i,p: Vector2,path_color: Color) -> void:
+	var center: Vector2=p+Vector2(8+sin((p.y+8)*0.025)*1.6,8+sin((p.x+8)*0.019)*1.6)
+	var neighbors: Array[Vector2i]=[]
+	for side in [Vector2i.UP,Vector2i.DOWN,Vector2i.LEFT,Vector2i.RIGHT]:
+		if _terrain_at(tile+side)==1:neighbors.append(side)
+	# The station courtyard is a deliberately paved place; the trails beyond
+	# it are narrow, wandering, variably edged soil rather than square cells.
+	if tile.x>=12 and tile.x<19 and tile.y>=17 and tile.y<22:
+		_landscape.rect(Rect2(p,Vector2(16,16)),path_color)
+		for row in range(2):
+			var a: Vector2=p+Vector2(0,4+row*8)
+			_landscape.line(a,a+Vector2(16,0.25),path_color.darkened(0.14),0.18)
+			_landscape.line(a+Vector2(4+row*5,0),a+Vector2(4+row*5,8),path_color.darkened(0.14),0.18)
+		return
+	for side: Vector2i in neighbors:
+		var edge: Vector2=p+Vector2(8+sin(p.y*0.025)*1.6,0)
+		if side==Vector2i.DOWN:edge=p+Vector2(8+sin((p.y+16)*0.025)*1.6,16)
+		elif side==Vector2i.LEFT:edge=p+Vector2(0,8+sin(p.x*0.019)*1.6)
+		elif side==Vector2i.RIGHT:edge=p+Vector2(16,8+sin((p.x+16)*0.019)*1.6)
+		var normal: Vector2=(edge-center).orthogonal().normalized()
+		var left := PackedVector2Array()
+		var right := PackedVector2Array()
+		for i in range(4):
+			var q: Vector2=center.lerp(edge,i/3.0)
+			var half_width: float=3.8+sin((q.x+q.y)*0.10)*0.45
+			left.append(q+normal*half_width)
+			right.append(q-normal*half_width)
+		var shape: PackedVector2Array=left.duplicate()
+		for i in range(right.size()-1,-1,-1):shape.append(right[i])
+		_landscape.polygon(shape,path_color,Color.TRANSPARENT)
+		for i in range(3):
+			if _hash(tile.x,tile.y,i+side.x*17+side.y*7)%3==0:
+				_landscape.line(left[i],left[i].lerp(left[i+1],0.7),path_color.darkened(0.25),0.17)
+			if _hash(tile.x,tile.y,i+side.x*13+side.y*19)%4==0:
+				_landscape.line(right[i],right[i].lerp(right[i+1],0.7),path_color.darkened(0.25),0.17)
+	if neighbors.size()!=2 or neighbors[0]+neighbors[1]!=Vector2i.ZERO:
+		_landscape.ellipse(center,Vector2(4.3,4.0),path_color,Color.TRANSPARENT)
 
 func _paint_tree(tile: Vector2i) -> void:
-	var x: float = tile.x*TILE+8
-	var y: float = tile.y*TILE+10
-	var glade: bool = biome_at(tile)=="Sunken Glade"
-	var dark := Color("5d918c") if glade else Color("467b46")
-	var middle := Color("84b9a0") if glade else Color("78ad54")
-	var light := Color("bed998") if glade else Color("b9d777")
-	_map_ellipse(Vector2(x+1,y+4),Vector2(13.5,3.5),Color("739f62"),false)
-	_micro_rect(x-2,y-8,4,15,Color("625f43"))
-	_micro_rect(x-1.5,y-7,0.75,13,Color("9d9366"))
-	_micro_rect(x+1,y-6,0.5,11,Color("454e39"))
-	_micro_line(Vector2(x-1,y+4),Vector2(x-5,y+6),Color("79784e"),0.5)
-	_micro_line(Vector2(x+1,y+4),Vector2(x+5,y+6.5),Color("4d5e40"),0.5)
-	# Overlapping grown lobes create a canopy, rather than a rectangular icon.
-	for lobe in [Vector3(-7,-14,8),Vector3(7,-14,8),Vector3(0,-20,9),Vector3(-5,-8,8),Vector3(5,-8,8)]:
-		_map_ellipse(Vector2(x+lobe.x,y+lobe.y),Vector2(lobe.z,lobe.z*0.83),dark)
-	for lobe in [Vector3(-6,-16,7.6),Vector3(5.5,-15,7.6),Vector3(0,-21,7.7),Vector3(-2,-9,8.4)]:
-		_map_ellipse(Vector2(x+lobe.x,y+lobe.y),Vector2(lobe.z,lobe.z*0.76),middle)
-	_map_ellipse(Vector2(x-3.5,y-22),Vector2(5.9,3.8),light)
-	_map_ellipse(Vector2(x-9,y-15),Vector2(4.1,2.4),light.darkened(0.08))
+	_landscape.scenery(biome_at(tile),Vector2(tile*TILE)+Vector2(8,10),_hash(tile.x,tile.y))
 
 func _paint_home() -> void:
-	var x: int = 12*TILE
-	var y: int = 19*TILE
-	_rect(x+2,y+7,92,48,Color("6b9873"))
-	_rect(x+7,y+21,82,27,Color("d5d09b"))
-	_rect(x+3,y+11,90,13,Color("70aa9b"))
-	_rect(x+8,y+5,80,9,Color("70aa9b"))
-	_rect(x+15,y,66,7,Color("70aa9b"))
-	_rect(x+12,y+10,72,2,Color("a7b49a"))
-	for xx in range(15,87,14):
-		_rect(x+xx,y+3,2,18,Color("7e9c8b"))
-		_rect(x+xx-2,y+24,9,16,Color("81bca3"))
-		_rect(x+xx-1,y+25,6,8,Color("b7dfc2"))
-	_rect(x+44,y+25,12,25,Color("719d75"))
-	_rect(x+46,y+27,8,18,Color("9cb775"))
-	_rect(x+51,y+36,1,2,Color("e1c287"))
-	_rect(x+40,y+48,20,4,Color("bbb083"))
-	_rect(x+39,y+53,22,3,Color("75815a"))
-	# Two tiny specimen boxes beside the door make this a botanist's station.
-	_rect(x+13,y+42,18,5,Color("a1a569"))
-	_rect(x+17,y+35,3,7,Color("bbd985"))
-	_rect(x+16,y+34,6,3,Color("d2b578"))
-	_rect(x+68,y+42,15,5,Color("a1a569"))
-	_rect(x+74,y+33,2,9,Color("aac677"))
-	_rect(x+71,y+30,7,4,Color("bd9db0"))
+	_landscape.shelter(Vector2(15*TILE+8,20*TILE+14),"Mosswood",true)
 
 func _update_camera() -> void:
 	if _map_rect.size.x<=0 or _map_rect.size.y<=0: return
 	var visible: Vector2 = _map_rect.size/float(_pixel_scale)
 	var desired: Vector2 = Vector2(player_tile*TILE)+Vector2(8,8)-visible*0.5
 	_camera = Vector2(floorf(clampf(desired.x,0,maxf(0,MAP_WIDTH*TILE-visible.x))),floorf(clampf(desired.y,0,maxf(0,MAP_HEIGHT*TILE-visible.y))))
+	_sync_wild_portraits()
+
+func _sync_wild_portraits() -> void:
+	if state==null or not is_instance_valid(_wild_layer) or _map_rect.size.x<1: return
+	_wild_layer.position=_map_rect.position
+	_wild_layer.size=_map_rect.size
+	var generation: String="%s/%s/%s" % [state.expedition.get("map_seed",0),state.expedition.get("respawn_day",0),int(state.expedition.get("captures",0))>=10]
+	if generation!=_wild_preview_generation:
+		_wild_previews.clear()
+		_wild_preview_generation=generation
+	var shown: Dictionary={}
+	var available: Vector2=Vector2(MAP_WIDTH*TILE,MAP_HEIGHT*TILE)-_camera
+	var viewport:=Rect2(Vector2.ZERO,Vector2(minf(_map_rect.size.x/_pixel_scale,available.x),minf(_map_rect.size.y/_pixel_scale,available.y)))
+	for site: Dictionary in SITES:
+		var id: String=str(site.id)
+		if _site_unavailable(id): continue
+		var point: Vector2=Vector2(int(site.x)*TILE+8,int(site.y)*TILE+10)-_camera
+		if not viewport.encloses(Rect2(point-Vector2(13,31),Vector2(26,33))): continue
+		if not _wild_previews.has(id): _wild_previews[id]=state.preview_wild_plant(str(site.biome),id)
+		var specimen: Dictionary=_wild_previews[id]
+		if specimen.is_empty(): continue
+		shown[id]=true
+		var art: Control=_wild_portraits.get(id)
+		if not is_instance_valid(art):
+			art=BotanicalArt.new()
+			art.animate=false
+			art.set_meta("wild_site_id",id)
+			_wild_layer.add_child(art)
+			_wild_portraits[id]=art
+		if int(art.get_meta("specimen_seed",-1))!=int(specimen.seed):
+			art.plant=specimen
+			art.set_meta("specimen_seed",int(specimen.seed))
+		art.position=(point+Vector2(-13,-31))*_pixel_scale
+		art.size=Vector2(26,33)*_pixel_scale
+	for id: String in _wild_portraits.keys():
+		if shown.has(id): continue
+		var art: Control=_wild_portraits[id]
+		_wild_layer.remove_child(art)
+		art.queue_free()
+		_wild_portraits.erase(id)
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO,size),Color("c6e8c9"))
+	draw_rect(Rect2(Vector2.ZERO,size),Color("ece8cd"))
 	if _terrain.is_empty() or _map_rect.size.x<1: return
-	draw_rect(_map_rect.grow(2),Color("9ebf7d"),false,2)
+	draw_rect(_map_rect.grow(2),Color("647b67"),false,1)
 	# Clip the map independently of interface panels.
 	draw_set_transform(_map_rect.position,0,Vector2(_pixel_scale,_pixel_scale))
 	var visible := Rect2(_camera,_map_rect.size/float(_pixel_scale))
@@ -884,6 +1031,9 @@ func _px(position: Vector2,dimensions: Vector2,color: Color) -> void:
 		draw_rect(Rect2(position.snapped(Vector2(0.25,0.25)),dimensions.snapped(Vector2(0.25,0.25))),color)
 
 func _draw_wild(p: Vector2,biome: String,variant: int,site_id: String = "") -> void:
+	if _wild_portraits.has(site_id):
+		draw_ellipse_shadow(p)
+		return
 	# Use the same organism as the encounter, without opening it or touching its
 	# collection record. Eight authored silhouettes now replace the field icons.
 	if state != null and not site_id.is_empty():
@@ -899,7 +1049,7 @@ func _draw_wild(p: Vector2,biome: String,variant: int,site_id: String = "") -> v
 			var factor: float = minf(25.0/frame_size.x,30.0/frame_size.y)
 			var dimensions: Vector2 = frame_size*factor
 			# One short shadow keeps roots anchored in the map's existing soil.
-			_px(p+Vector2(-5,0),Vector2(10,1.5),Color("233f2d"))
+			draw_ellipse_shadow(p)
 			draw_texture_rect(artwork,Rect2(p+Vector2(-dimensions.x*0.5,1-dimensions.y),dimensions),false)
 			return
 	var key: String = "wild:%s:%d" % [biome,variant]
@@ -914,17 +1064,40 @@ func _draw_wild(p: Vector2,biome: String,variant: int,site_id: String = "") -> v
 	draw_texture_rect(_sprite_cache[key],Rect2(p+Vector2(-10,-28),Vector2(20,32)),false)
 
 func _draw_player(p: Vector2) -> void:
-	var foot: int = _walk_phase if _step_cooldown>0.02 else 0
-	var key: String = "player:%d:%d:%d" % [_facing.x,_facing.y,foot]
+	var foot: int=_walk_phase if _step_cooldown>0.02 else 0
+	var key: String="ink_player:%d:%d:%d" % [_facing.x,_facing.y,foot]
 	if not _sprite_cache.has(key):
-		_sprite_image = Image.create(20*DETAIL,32*DETAIL,false,Image.FORMAT_RGBA8)
-		_sprite_image.fill(Color.TRANSPARENT)
-		_paint_player_sprite(Vector2(10,28),foot)
-		_paint_sprite_finish(true)
-		_sprite_image.generate_mipmaps()
-		_sprite_cache[key] = ImageTexture.create_from_image(_sprite_image)
-		_sprite_image = null
-	draw_texture_rect(_sprite_cache[key],Rect2(p+Vector2(-10,-28),Vector2(20,32)),false)
+		var bitmap := Image.create(24*DETAIL,36*DETAIL,false,Image.FORMAT_RGBA8)
+		bitmap.fill(Color.TRANSPARENT)
+		var ink := LandscapeArt.new()
+		ink.canvas(bitmap,Vector2.ZERO,DETAIL)
+		var base := Vector2(12,32)
+		ink.ellipse(base+Vector2(1,0),Vector2(6,1.4),Color("5e7768"),Color.TRANSPARENT)
+		for sign_value in [-1,1]:
+			var leg: Vector2=base+Vector2(sign_value*2,-6)
+			ink.line(leg,base+Vector2(sign_value*2,-1+foot*sign_value*0.6),Color("344b48"),2.2)
+			ink.line(base+Vector2(sign_value*2,-1+foot*sign_value*0.6),base+Vector2(sign_value*2.3+0.7,foot*sign_value*0.6),Color("4e4a3e"),1.7)
+		ink.polygon(PackedVector2Array([base+Vector2(-3,-16),base+Vector2(3,-16),base+Vector2(5,-6),base+Vector2(0,-4),base+Vector2(-5,-6)]),Color("b6bb8e") if _facing.y>=0 else Color("75947e"))
+		ink.line(base+Vector2(-3.5,-14),base+Vector2(-5.2,-7),Color("566d5d"),1.5)
+		ink.line(base+Vector2(3.5,-14),base+Vector2(5.2,-7),Color("566d5d"),1.5)
+		ink.line(base+Vector2(-0.8,-15),base+Vector2(3,-5),Color("826e4e"),0.55)
+		ink.ellipse(base+Vector2(4,-7),Vector2(2.4,3.0),Color("b89161"))
+		ink.ellipse(base+Vector2(0,-19),Vector2(3.5,4),Color("e2bf98"))
+		if _facing.y<0:ink.ellipse(base+Vector2(0,-19),Vector2(3.3,3.8),Color("725e4b"))
+		else:
+			for eye in [-1,1]:
+				if _facing.x==0 or eye==_facing.x:ink.ellipse(base+Vector2(eye*1.4+_facing.x*0.6,-18.5),Vector2(0.25,0.35),Color("39453c"),Color.TRANSPARENT)
+		ink.ellipse(base+Vector2(0,-22),Vector2(6.5,1.6),Color("d9c28d"))
+		ink.polygon(PackedVector2Array([base+Vector2(-3.8,-22),base+Vector2(-3,-26),base+Vector2(2.7,-26.5),base+Vector2(3.8,-22)]),Color("e3cd99"))
+		ink.line(base+Vector2(-3.4,-22.5),base+Vector2(3.4,-22.5),Color("799273"),0.7)
+		bitmap.generate_mipmaps()
+		_sprite_cache[key]=ImageTexture.create_from_image(bitmap)
+	draw_texture_rect(_sprite_cache[key],Rect2(p+Vector2(-12,-32),Vector2(24,36)),false)
+
+func draw_ellipse_shadow(p: Vector2) -> void:
+	draw_set_transform(_map_rect.position+Vector2(p.x,p.y+0.6)*_pixel_scale,0,Vector2(_pixel_scale,_pixel_scale*0.22))
+	draw_circle(Vector2.ZERO,5.5,Color("5a7966"),false,0.35,true)
+	draw_set_transform(_map_rect.position,0,Vector2(_pixel_scale,_pixel_scale))
 
 func _draw_marker(p: Vector2) -> void:
 	_px(p-Vector2(3,3),Vector2(7,7),Color("213c31"))
@@ -1040,117 +1213,33 @@ func _terrain_at(tile: Vector2i) -> int:
 	return _terrain[tile.y*MAP_WIDTH+tile.x]
 
 func _paint_tile_detail(tile: Vector2i) -> void:
-	var x: float = tile.x*TILE
-	var y: float = tile.y*TILE
-	var terrain: int = _terrain[tile.y*MAP_WIDTH+tile.x]
-	var biome: String = biome_at(tile)
-	if terrain == 2:
-		# Long coherent ripples and silt edges replace a noisy field of dots.
-		for i in range(5):
-			var xx: float = x+float(_hash(tile.x,tile.y,61+i)%48)/4.0
-			var yy: float = y+1.0+float(_hash(tile.x,tile.y,72+i)%52)/4.0
-			_micro_line(Vector2(xx,yy),Vector2(minf(x+15.75,xx+2.0+i%3),yy),Color("99d7dc"))
-			_micro_line(Vector2(xx+0.5,yy+0.5),Vector2(minf(x+15.75,xx+2.5),yy+0.5),Color("5da4b5"))
-		for side in [Vector2i.UP,Vector2i.DOWN,Vector2i.LEFT,Vector2i.RIGHT]:
-			if _water(tile+side): continue
-			for j in range(16):
-				var drift: float = float(_hash(tile.x,tile.y,j+81)%5)/4.0
-				var p := Vector2(x+j,y+drift) if side==Vector2i.UP else Vector2(x+j,y+15.0-drift)
-				if side==Vector2i.LEFT: p = Vector2(x+drift,y+j)
-				if side==Vector2i.RIGHT: p = Vector2(x+15.0-drift,y+j)
-				_micro_rect(p.x,p.y,0.75,0.5,Color("c8dca9"))
+	var p := Vector2(tile*TILE)
+	var terrain: int=_terrain_at(tile)
+	var biome: String=biome_at(tile)
+	if terrain==2:
+		for i in range(2):
+			var q: Vector2=p+Vector2(2+_hash(tile.x,tile.y,60+i)%10,3+i*7)
+			_landscape.line(q,q+Vector2(3+i,0.3),Color("c8e0c2"),0.19)
 		return
-	if terrain == 1:
-		if _water(tile):
-			for plank in range(4):
-				for grain in range(3):
-					var offset: float = float(_hash(tile.x,tile.y,grain+plank*9)%6)*0.25
-					_micro_line(Vector2(x+1+offset,y+1+plank*4+grain*0.5),Vector2(x+13-offset,y+1+plank*4+grain*0.5),Color("99916a") if grain==0 else Color("6c7251"))
-				_micro_rect(x+0.75,y+1+plank*4,0.5,0.5,Color("414e3c"))
-				_micro_rect(x+14.25,y+1+plank*4,0.5,0.5,Color("414e3c"))
-		else:
-			for i in range(13):
-				var xx: float = x+0.75+float(_hash(tile.x,tile.y,100+i)%56)/4.0
-				var yy: float = y+0.75+float(_hash(tile.x,tile.y,113+i)%56)/4.0
-				var pebble: bool = i%4==0
-				_micro_rect(xx,yy,0.5 if pebble else 0.25,0.25,Color("8d8861"))
-				if pebble: _micro_rect(xx,yy-0.25,0.5,0.25,Color("c1b58a"))
-			for side in [Vector2i.UP,Vector2i.DOWN,Vector2i.LEFT,Vector2i.RIGHT]:
-				if _terrain_at(tile+side)==1: continue
-				for j in range(7):
-					var stretch: float = float(_hash(tile.x,tile.y,j+93)%4)*0.25
-					var edge := Vector2(x+j*2+1,y+1) if side==Vector2i.UP else Vector2(x+j*2+1,y+14.5)
-					if side==Vector2i.LEFT: edge=Vector2(x+1,y+j*2+1)
-					if side==Vector2i.RIGHT: edge=Vector2(x+14.5,y+j*2+1)
-					_micro_line(edge,edge+Vector2(stretch+0.5,0.5),Color("7d8459"))
-		return
-	var dark := Color("649646")
-	var light := Color("c1dc86")
-	var middle := Color("8bb65e")
-	if biome=="Amber Hollow": dark=Color("9c9e50");light=Color("e1df92");middle=Color("b8c66d")
-	elif biome in ["Sporefen","Moonfen"]: dark=Color("5a8f7c");light=Color("bedcc0");middle=Color("87b995")
-	elif biome in ["Sunken Glade","Ancient Grove"]: dark=Color("648c94");light=Color("c7e1cf");middle=Color("96bdb0")
-	# Four multi-blade tufts per tile. Each shares a root crown and directional
-	# shading, avoiding the previous evenly scattered high-contrast speckle.
-	for tuft in range(4):
-		var xx: float = x+1.5+float(_hash(tile.x,tile.y,21+tuft)%48)/4.0
-		var yy: float = y+3.5+float(_hash(tile.x,tile.y,35+tuft)%43)/4.0
-		_micro_rect(xx-0.5,yy,2,0.25,dark)
+	# Paper-colored open ground, sparse ink marks and grouped tussocks let the
+	# large plant silhouettes breathe. No regular grass grid or pixel noise.
+	for i in range(2 if terrain==1 else 3):
+		var q: Vector2=p+Vector2(2+_hash(tile.x,tile.y,73+i)%12,3+_hash(tile.x,tile.y,87+i)%11)
+		var ink := Color("80966c") if terrain==0 else Color("a69878")
+		if biome=="Ember Ridge":ink=Color("996d5f")
+		_landscape.line(q,q+Vector2(0.55,0.18),ink,0.18)
+	if terrain==0 and _hash(tile.x,tile.y,4)%3==0:
+		var q: Vector2=p+Vector2(6,11)
 		for blade in range(4):
-			var reach: float = 1.25+float(_hash(tile.x,tile.y,blade+tuft*5)%7)*0.25
-			var bend: float = float(blade-2)*0.5
-			var base := Vector2(xx+blade*0.25,yy)
-			var tip := base+Vector2(bend,-reach)
-			_micro_line(base,tip,dark,0.5)
-			_micro_line(base+Vector2(0.25,0),tip+Vector2(0.25,0),middle)
-			_micro_rect(tip.x+0.25,tip.y,0.25,0.75,light)
-	if _hash(tile.x,tile.y,7)%7==0:
-		var flower := Vector2(x+7.5,y+8.25)
-		_micro_line(flower+Vector2(0,2),flower,Color("71895d"))
-		_map_ellipse(flower,Vector2(0.75,0.5),Color("c9bc91"),false)
-		_micro_rect(flower.x,flower.y-0.25,0.25,0.25,Color("ecdeb0"))
+			_landscape.line(q+Vector2(blade*0.7,0),q+Vector2(blade-1.5,-1.4-blade%2),Color("6e8862"),0.22)
+	if terrain==0 and _hash(tile.x,tile.y,17)%11==0:
+		_landscape.rock(p+Vector2(8,10),0.19,Color("c2c5a5"),_hash(tile.x,tile.y))
 
-func _paint_tree_detail(tile: Vector2i) -> void:
-	var center := Vector2(tile.x*TILE+8,tile.y*TILE+10)
-	var glade: bool = biome_at(tile)=="Sunken Glade"
-	var shadow := Color("70a389") if glade else Color("64934d")
-	var light := Color("b4d4b7") if glade else Color("b3cd7e")
-	var bright := Color("d5e5bc") if glade else Color("dbe59e")
-	for cluster in range(42):
-		var offset := Vector2(-12.5+float(_hash(tile.x,tile.y,150+cluster)%101)/4.0,-23.5+float(_hash(tile.x,tile.y,206+cluster)%81)/4.0)
-		if pow(offset.x/13.0,2)+pow((offset.y+14)/11.0,2)>1: continue
-		var p: Vector2 = center+offset
-		var slant: float = -0.5 if cluster%2 else 0.5
-		_map_ellipse(p,Vector2(1.4,0.55),light if cluster%3 else shadow)
-		_micro_line(p-Vector2(1,0),p+Vector2(0.75,slant*0.5),bright)
-		_micro_line(p+Vector2(-0.25,0),p+Vector2(-0.5,-0.5),light.lightened(0.08))
-	for stripe in range(6):
-		_micro_line(center+Vector2(-0.75+stripe%3*0.5,-6+stripe*2),center+Vector2(-0.5+stripe%3*0.5,-4.5+stripe*2),Color("8e865c"))
+func _paint_tree_detail(_tile: Vector2i) -> void:
+	pass # All bark, leaf veins, strata and ink contours belong to LandscapeArt.
 
 func _paint_home_detail() -> void:
-	var x: float = 12*TILE
-	var y: float = 19*TILE
-	for pane in range(5):
-		var xx: float = x+15.5+pane*14
-		# Each pane has a narrow frame, sky streaks and a reflected branch.
-		_micro_line(Vector2(xx-1.5,y+12),Vector2(xx+10,y+12),Color("2e5c51"),0.25)
-		_micro_line(Vector2(xx+4,y+25.5),Vector2(xx+4,y+38.5),Color("bcc69d"),0.25)
-		_micro_line(Vector2(xx+0.5,y+6.5),Vector2(xx+5,y+16.5),Color("83a89a"),0.5)
-		_micro_line(Vector2(xx+1.25,y+6.5),Vector2(xx+5.75,y+16.5),Color("b3c4ad"),0.25)
-		_micro_line(Vector2(xx+0.5,y+31),Vector2(xx+3.5,y+27),Color("3d6a53"),0.25)
-		_micro_line(Vector2(xx+2,y+30),Vector2(xx+0.75,y+28),Color("5c8668"),0.25)
-		_micro_line(Vector2(xx+2.5,y+26),Vector2(xx+6.5,y+26),Color("c0c9a0"),0.25)
-	for row in range(5):
-		var yy: float = y+26.5+row*4.5
-		for limits in [Vector2(8,42),Vector2(57.5,87)]:
-			_micro_line(Vector2(x+limits.x,yy),Vector2(x+limits.y,yy),Color("78845e"))
-			for joint in range(3):
-				var jx: float = x+limits.x+3+joint*10+row%2*3.5
-				_micro_line(Vector2(jx,yy),Vector2(jx,yy+3.5),Color("a5aa7b"))
-	_micro_line(Vector2(x+45.5,y+27.5),Vector2(x+45.5,y+44),Color("8b9870"))
-	_micro_rect(x+50.5,y+36,0.75,0.75,Color("efd3a0"))
-	_micro_rect(x+50.75,y+36,0.25,0.25,Color("fff0bf"))
-	for step in range(8): _micro_line(Vector2(x+40.5+step*2.5,y+49.5),Vector2(x+42+step*2.5,y+49.5),Color("d5c899"))
+	pass # Fine roof framing and reflected glass are drawn by LandscapeArt.
 
 func _draw_wild_detail(p: Vector2,biome: String,variant: int) -> void:
 	var light := Color("b9d29c")
@@ -1229,26 +1318,7 @@ func _paint_sprite_finish(player: bool) -> void:
 		_px(Vector2(14.5,18.5),Vector2(0.25,0.5),Color("e4cb97"))
 
 func _paint_camp(camp: Dictionary) -> void:
-	var x: float = int(camp.x)*TILE+8
-	var y: float = int(camp.y)*TILE+10
-	var roof := Color("9cbd7c")
-	if str(camp.biome)=="Ember Ridge": roof=Color("aa7952")
-	elif str(camp.biome) in ["Sunken Glade","Moonfen"]: roof=Color("778396")
-	elif str(camp.biome)=="Glassfall Coast": roof=Color("a8b6a0")
-	_map_ellipse(Vector2(x,y+5),Vector2(17,5),Color("729764"),false)
-	_micro_rect(x-13,y-2,2,12,Color("786f4d"))
-	_micro_rect(x+11,y-2,2,12,Color("786f4d"))
-	_micro_rect(x-17,y-8,34,3,roof.darkened(0.18))
-	_micro_rect(x-14,y-12,28,5,roof)
-	_micro_rect(x-9,y-15,18,4,roof.lightened(0.10))
-	_micro_rect(x-3,y-18,6,4,roof.lightened(0.18))
-	for i in range(9):
-		var xx: float = x-13+i*3
-		_micro_line(Vector2(xx,y-8),Vector2(xx+2,y-5),roof.darkened(0.22),0.25)
-	_micro_rect(x-9,y+5,18,3,Color("b29d6b"))
-	_micro_rect(x+15,y-3,1,13,Color("8e815a"))
-	_micro_rect(x+16,y-3,7,5,Color("d8c88d"))
-	_micro_rect(x+17,y-2,5,0.5,Color("8a906c"))
+	_landscape.shelter(Vector2(int(camp.x)*TILE+8,int(camp.y)*TILE-7),str(camp.biome))
 
 func _build_atlas_texture() -> void:
 	var image := Image.create(MAP_WIDTH,MAP_HEIGHT,false,Image.FORMAT_RGBA8)
@@ -1334,9 +1404,38 @@ func _rebuild_camp_list() -> void:
 	var visited: Array = state.expedition.get("visited_landmarks",[]) if state!=null else []
 	for camp: Dictionary in LANDMARKS:
 		var known: bool = camp.id=="home" or visited.has(camp.id)
+		var card := PanelContainer.new()
+		card.set_meta("habitat_key",str(camp.biome))
+		card.set_meta("habitat_camp",str(camp.id))
+		card.add_theme_stylebox_override("panel",_style(Color("f1eed3"),Color("8b9b7c"),8))
+		_camp_list.add_child(card)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation",10)
+		card.add_child(row)
+		var art := TextureRect.new()
+		art.texture=landscape_texture(str(camp.biome))
+		art.custom_minimum_size=Vector2(80,88) if size.x<700 else Vector2(134,98)
+		art.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+		art.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		art.texture_filter=CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		art.mouse_filter=Control.MOUSE_FILTER_IGNORE
+		art.visible=art.texture!=null
+		row.add_child(art)
+		var notes := VBoxContainer.new()
+		notes.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+		row.add_child(notes)
+		var region: Dictionary=Habitat.region(str(camp.biome))
+		var name_label := _label(str(camp.biome),15,Color("284838"))
+		name_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+		notes.add_child(name_label)
+		var residents := _label(" · ".join(region.get("signature_species",[])),12,Color("657d65"))
+		residents.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+		notes.add_child(residents)
 		var b := _button("Travel to %s" % str(camp.name) if known else "%s / Unvisited camp" % str(camp.name),func(): _travel_to(camp))
+		b.clip_text=true
+		b.tooltip_text=str(region.get("landscape",""))
 		b.disabled = not known
-		_camp_list.add_child(b)
+		notes.add_child(b)
 
 func _route_to(target: Vector2i) -> void:
 	if not is_walkable(target):

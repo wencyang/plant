@@ -2,6 +2,9 @@ extends RefCounted
 class_name GardenState
 const Care = preload("res://scripts/plant_care.gd")
 const Market = preload("res://scripts/market_rules.gd")
+const Fair = preload("res://scripts/garden_fair.gd")
+const Habitat = preload("res://scripts/habitat_catalog.gd")
+const Adventure = preload("res://scripts/plant_adventure.gd")
 
 ## All organisms, including retired donors and every ancestor, remain in this archive.
 ## Visuals are derived from diploid genes and seed; no baked appearance is saved.
@@ -47,6 +50,8 @@ var bed: Array = []
 var display_bed: Array = []
 var resources: Dictionary = {"sunlight": 180, "agents": 3, "grafts": 3}
 var market: Dictionary = Market.default_market()
+var fair: Dictionary = Fair.default_fair()
+var adventure: Dictionary = Adventure.default_adventure()
 var seed_bank: Array = []
 var fruit_inventory: Array = []
 var fruit_crops: Dictionary = {}
@@ -86,6 +91,8 @@ func new_game() -> void:
 	reproduction_counter = 0
 	resources = {"sunlight": 180, "agents": 3, "grafts": 3}
 	market = Market.default_market()
+	fair = Fair.default_fair()
+	adventure = Adventure.default_adventure()
 	field_kits = 12
 	expedition = _default_expedition()
 	bed = ["", "", "", "", "", "", "", "", ""]
@@ -114,6 +121,192 @@ func new_game() -> void:
 
 func get_plant(id: String) -> Dictionary:
 	return plants.get(id, {})
+
+func _adventure_template(key: String) -> Dictionary:
+	var row: Dictionary=Adventure.definition(key)
+	if row.is_empty(): return {}
+	var p: Dictionary=_create_base(int(row.species_index),int(row.seed),"adventure_preview_"+key)
+	p.name=str(row.name)
+	for slot: String in row.genes:
+		p.genes[slot]={"dominant":row.genes[slot],"recessive":row.genes[slot]}
+	if key=="moonbell":
+		p.genes.color={"dominant":"d2c7a5","recessive":"d2c7a5"}
+		p.genes.accent={"dominant":"add7cd","recessive":"add7cd"}
+	p["lineage_mix"]={str(p.type):1.0}
+	p["hybrid"]=false
+	p["lineage_name"]=str(p.type)
+	p["origin"]={"kind":"wild","biome":"Mosswood","site":"river_story_"+key,"adventure_key":key,"adventure_version":Adventure.VERSION}
+	p.care.life_bonus_seconds=2100
+	p.care.uses={"water":5,"longevity":3}
+	for slot: String in p.genes:
+		p.gene_sources[slot]={"allele_a":{"parent_id":"","parent_name":p.name,"allele":"founder","value":p.genes[slot].dominant},"allele_b":{"parent_id":"","parent_name":p.name,"allele":"founder","value":p.genes[slot].recessive},"expressed_origin":"founder","expressed":p.genes[slot].dominant,"carried":p.genes[slot].recessive}
+	p.rarity=_calculate_rarity(p)
+	return p
+
+func _adventure_cutting_available(key: String) -> bool:
+	var id: String=str(adventure.cuttings.get(key,""))
+	if not owns_plant(id): return false
+	var p: Dictionary=plants[id]
+	if bool(life_profile(id).withered) or bool(p.get("retired",false)): return false
+	var original: Dictionary=_adventure_template(key)
+	if original.is_empty() or str(p.type)!=str(original.type): return false
+	var traits: Array=["glow"] if key=="moonbell" else (["shape","texture"] if key in ["river_fan","floatcap"] else ["form","texture"])
+	for trait_key: String in traits:
+		if Adventure.gene(p,trait_key)!=Adventure.gene(original,trait_key): return false
+	return true
+
+func adventure_capabilities(p: Dictionary) -> Dictionary:
+	return Adventure.capabilities(p)
+
+func adventure_plants() -> Array:
+	var rows: Array=[]
+	for row: Dictionary in Adventure.PARENTS:
+		var result: Dictionary=row.duplicate(true)
+		var key: String=str(row.key)
+		var claimed: bool=_adventure_cutting_available(key)
+		var current_id: String=str(adventure.cuttings.get(key,""))
+		result["plant"]=plants[current_id] if claimed else _adventure_template(key)
+		result["id"]=current_id
+		result["claimed"]=claimed
+		result["available"]=key!="moonbell" or not str(adventure.route).is_empty()
+		result["replacement"]=not current_id.is_empty() and not claimed
+		rows.append(result)
+	return rows
+
+func adventure_info() -> Dictionary:
+	var info: Dictionary=adventure.duplicate(true)
+	var stage: String="restored" if not str(adventure.lantern_id).is_empty() else ("lantern" if not str(adventure.moonbell_id).is_empty() else ("island" if not str(adventure.route).is_empty() else "shore"))
+	info["stage"]=stage
+	var story: Dictionary={
+		"shore":{"title":"The flower across the stream","objective":"Grow a way across the stream.","description":"A pale flower waits on the far bank. Explore the four riverside plants, cross useful traits, and grow a living raft or a vine bridge."},
+		"island":{"title":"A flower worth the journey","objective":"Meet Moonbell on the far bank.","description":"Your plant has changed the stream. Follow the crossing and take a Moonbell cutting for the next generation."},
+		"lantern":{"title":"A light for the forgotten garden","objective":"Grow a generation-3 plant that shows Soft Glow.","description":"Moonbell carries a light in both glow copies. Cross it with your generation-2 offspring, then let a glowing descendant light the hidden courtyard."},
+		"restored":{"title":"Your family brought the garden back","objective":"The hidden courtyard is alive again.","description":"Your crossing and lantern bloom have become part of this place. Try a different cross, name a favorite descendant, or keep growing the family."}}
+	info.merge(story[stage],true)
+	var last: Dictionary=adventure.last_cross
+	var batch: Dictionary=pollinations.get(str(last.get("mother_id","")),{})
+	if not batch.is_empty() and str(batch.id)!=str(last.get("fruit_id","")): batch={}
+	info["cross_ready"]=not batch.is_empty() and int(batch.ready_at)<=int(Time.get_unix_time_from_system())
+	info["cross_ready_at"]=int(batch.get("ready_at",0))
+	info["cross_growing"]=not batch.is_empty() and not bool(info.cross_ready)
+	info["cross_status"]="fruit" if not batch.is_empty() else ("siblings" if not adventure.siblings.is_empty() else "none")
+	if str(info.cross_status)=="none" and not last.is_empty():
+		for fruit: Dictionary in fruit_inventory:
+			if str(fruit.id)==str(last.fruit_id): info.cross_ready=true; info.cross_status="stored_fruit"; break
+		if str(info.cross_status)=="none":
+			var stored_seeds: int=0
+			for suffix: String in ["_seed_1","_seed_2"]:
+				for packet: Dictionary in seed_bank:
+					if str(packet.get("id",""))==str(last.fruit_id)+suffix: stored_seeds+=1; break
+			if stored_seeds==2: info.cross_ready=true; info.cross_status="stored_seeds"
+	info["parents"]=adventure_plants()
+	return info
+
+func adventure_collect(key: String) -> Dictionary:
+	var row: Dictionary=Adventure.definition(key)
+	if row.is_empty(): return _failure("Choose a riverside plant to study first.")
+	if key=="moonbell" and str(adventure.route).is_empty(): return _failure("Grow a living crossing before collecting the flower on the far bank.")
+	if _adventure_cutting_available(key): return _failure("This field cutting is already growing in your collection.")
+	var p: Dictionary=_adventure_template(key)
+	p.id=_new_id()
+	_add_plant(p)
+	adventure.cuttings[key]=str(p.id)
+	if key=="moonbell": adventure.moonbell_id=str(p.id)
+	save_game()
+	return {"ok":true,"message":"%s has joined your collection. Its visible traits and both gene copies are ready for breeding." % p.name,"plant":p,"plant_id":str(p.id),"key":key}
+
+func adventure_preview(plant_id: String,goal: String = "stream") -> Dictionary:
+	var p: Dictionary=get_plant(plant_id)
+	var abilities: Dictionary=Adventure.capabilities(p)
+	var result: Dictionary={"ok":true,"eligible":false,"reason":"","abilities":abilities,"plant_id":plant_id,"goal":goal,"routes":abilities.routes}
+	if not goal in ["stream","lantern"]: result.ok=false; result.reason="Choose the stream crossing or the hidden courtyard."; return result
+	if not owns_plant(plant_id): result.reason="Choose a plant that belongs to your garden."; return result
+	if bool(life_profile(plant_id).withered): result.reason="This plant has withered. Grow its seeds or choose a living descendant."; return result
+	if not bool(p.get("mature",false)): result.reason="Let this seedling finish growing before trying its ability."; return result
+	if p.get("parents",[]).size()<2 or int(p.get("generation",1))<2: result.reason="Cross two different parents, then grow their offspring to try an inherited ability."; return result
+	if goal=="stream":
+		if not str(adventure.route).is_empty(): result.reason="Your living crossing is already part of the stream."; return result
+		result.eligible=bool(abilities.raft) or bool(abilities.vine)
+		result.reason="This plant can grow a living crossing!" if bool(result.eligible) else "Try Leaf + Spore ancestry with Round or Split leaves and Waxy tissue, or Vine + Root ancestry with Climbing growth and Fibrous tissue."
+	else:
+		if str(adventure.route).is_empty(): result.reason="Open a living crossing before lighting the hidden courtyard."; return result
+		if str(adventure.moonbell_id).is_empty(): result.reason="Meet Moonbell on the far bank before lighting the hidden courtyard."; return result
+		if not str(adventure.lantern_id).is_empty(): result.reason="Your lantern bloom has already brought the courtyard to life."; return result
+		result.eligible=bool(abilities.lantern)
+		result.reason="This descendant can light the hidden courtyard!" if bool(result.eligible) else "Grow a generation-3 or later plant that shows Soft Glow. Carried glow can appear in another cross."
+	return result
+
+func adventure_use(plant_id: String,goal: String = "stream",route: String = "") -> Dictionary:
+	var preview: Dictionary=adventure_preview(plant_id,goal)
+	if not bool(preview.eligible): return _failure(str(preview.reason))
+	var p: Dictionary=plants[plant_id]
+	if goal=="stream":
+		var chosen: String=route if not route.is_empty() else str(preview.routes[0])
+		if not chosen in preview.routes: return _failure("This plant does not have the inherited traits for that crossing.")
+		adventure.route=chosen
+		adventure.route_plant_id=plant_id
+		adventure.route_record={"plant_id":plant_id,"at":int(Time.get_unix_time_from_system()),"evidence":Adventure.evidence(p)}
+	else:
+		adventure.lantern_id=plant_id
+		adventure.lantern_record={"plant_id":plant_id,"at":int(Time.get_unix_time_from_system()),"evidence":Adventure.evidence(p)}
+	save_game()
+	return {"ok":true,"message":"%s has grown a living crossing. Your original plant stays in your collection." % p.name if goal=="stream" else "%s lights the forgotten courtyard. Your family has changed this place." % p.name,"plant":p,"plant_id":plant_id,"goal":goal,"route":str(adventure.route),"stage":str(adventure_info().stage)}
+
+func adventure_begin_cross(id_a: String,id_b: String) -> Dictionary:
+	var result: Dictionary=pollinate(id_a,id_b,false)
+	if not bool(result.get("ok",false)): return result
+	adventure.last_cross={"mother_id":id_a,"father_id":id_b,"fruit_id":str(result.fruit_id)}
+	adventure.siblings=[]
+	save_game()
+	return result
+
+func adventure_siblings(mother_id: String) -> Dictionary:
+	var last: Dictionary=adventure.last_cross
+	if last.is_empty() or str(last.get("mother_id",""))!=mother_id: return _failure("Choose the mother of your latest adventure cross.")
+	var fruit_id: String=str(last.fruit_id)
+	var seeds: Array=[]
+	var source: String=""
+	var fruit_index: int=-1
+	var seed_indices: Array[int]=[]
+	var reward: int=0
+	var batch: Dictionary=pollinations.get(mother_id,{})
+	if not batch.is_empty() and str(batch.id)==fruit_id:
+		if int(batch.ready_at)>int(Time.get_unix_time_from_system()): return _failure("The hybrid fruit is still growing. Let it ripen before planting the siblings.")
+		seeds=batch.seeds.duplicate(true); source="growing"; reward=30
+	else:
+		for i in range(fruit_inventory.size()):
+			if str(fruit_inventory[i].id)==fruit_id:
+				fruit_index=i; seeds=fruit_inventory[i].seeds.duplicate(true); source="stored"; break
+		if source.is_empty():
+			for suffix: String in ["_seed_1","_seed_2"]:
+				for i in range(seed_bank.size()):
+					if str(seed_bank[i].get("id",""))==fruit_id+suffix:
+						seeds.append(seed_bank[i].duplicate(true)); seed_indices.append(i); break
+			if seeds.size()==2: source="seeds"
+	if seeds.size()!=2: return _failure("These siblings have already been planted or their fruit was opened elsewhere. Look for their plants or seeds in the nursery.")
+	for seed: Dictionary in seeds:
+		if not _valid_planting_seed(seed) or seed.get("parents",[])!=[last.mother_id,last.father_id]: return _failure("This fruit's seed genomes are incomplete. Its parentage remains in your archive.")
+	if int(resources.sunlight)+reward<20: return _failure("Planting both siblings needs 20 gathered light.")
+	# Every failure has been checked. Reuse the normal seed planter without
+	# intermediate writes so this whole harvest/extract/sow operation saves once.
+	if source=="growing": pollinations.erase(mother_id)
+	elif source=="stored": fruit_inventory.remove_at(fruit_index)
+	else:
+		seed_indices.sort()
+		seed_indices.reverse()
+		for i: int in seed_indices: seed_bank.remove_at(i)
+	resources.sunlight+=reward
+	last_seed_collection=int(Time.get_unix_time_from_system())
+	var born: Array=[]
+	var ids: Array[String]=[]
+	for seed: Dictionary in seeds:
+		seed_bank.append(seed)
+		var planted: Dictionary=plant_seed(seed_bank.size()-1,-1,false)
+		born.append(planted.plant)
+		ids.append(str(planted.plant.id))
+	adventure.siblings=ids.duplicate()
+	save_game()
+	return {"ok":true,"message":"Two sibling seedlings have taken root. Their own inherited traits will unfold in 12 seconds.","plants":born,"plant_ids":ids,"mother_id":mother_id,"fruit_id":fruit_id,"sunlight":reward-20}
 
 func owns_plant(id: String) -> bool:
 	return plants.has(id) and plant_order.has(id) and not bool(plants[id].get("sold",false))
@@ -192,7 +385,8 @@ func _market_quote_resolved(kind: String,reference: Variant,item: Dictionary) ->
 	quote["key"]=str(item.get("id","")) if kind!="seed" else str(reference.fingerprint)
 	quote["reason"]="Ready to sell."
 	if kind=="plant":
-		if bool(item.get("favorite",false)): quote.eligible=false; quote.reason="Favorites are protected. Unlock this plant before selling it."
+		if not str(item.get("origin",{}).get("adventure_key","")).is_empty(): quote.eligible=false; quote.reason="Field cuttings stay with you. Their offspring can be traded."
+		elif bool(item.get("favorite",false)): quote.eligible=false; quote.reason="Favorites are protected. Unlock this plant before selling it."
 		elif pollinations.has(item.id): quote.eligible=false; quote.reason="Harvest this plant's hybrid fruit before selling it."
 		elif bool(fruit_status(str(item.id)).natural_ready): quote.eligible=false; quote.reason="Harvest this plant's ripe natural fruit before selling it."
 		elif fruit_crops.has(item.id): quote.notes.append("Unripe natural fruit travels with the sold plant.")
@@ -268,6 +462,92 @@ func market_buy(stock_key: String) -> Dictionary:
 func care_tools() -> Array:
 	return Care.tools()
 
+func _fair_plant_reason(id: String) -> String:
+	if not owns_plant(id): return "Choose a plant that belongs to your garden. Sold plants stay in the family archive."
+	if bool(life_profile(id).withered): return "Bring a living plant to the fair. Plant this lineage's seeds to continue its story."
+	if not bool(plants[id].mature): return "Let this seedling finish growing before showing it at the fair."
+	return ""
+
+func _fair_eligible_ids(definition: Dictionary) -> Array:
+	var result: Array = []
+	for id: String in plant_order:
+		if _fair_plant_reason(id).is_empty() and Fair.meets(definition,plants[id]): result.append(id)
+	return result
+
+func fair_requests() -> Array:
+	var result: Array = Fair.requests()
+	for request: Dictionary in result:
+		request["claimed"]=fair.claims.has(request.key)
+		request["eligible_ids"]=_fair_eligible_ids(request)
+		request["reason"]="Already shown today. Visit the fair again tomorrow." if bool(request.claimed) else ("Choose a matching grown plant. You keep it after the visit." if not request.eligible_ids.is_empty() else str(request.goal))
+	return result
+
+func fair_preview(key: String,plant_id: String) -> Dictionary:
+	var result: Dictionary = {"ok":false,"eligible":false,"reason":"This request has expired. Open today's fair requests.","claimed":false,"rewards":{},"request":{},"plant_id":plant_id}
+	var request: Dictionary = {}
+	for definition: Dictionary in Fair.requests():
+		if str(definition.key)==key: request=definition; break
+	if request.is_empty(): return result
+	result.ok=true
+	result.request=request
+	result.rewards=request.reward.duplicate(true)
+	result.claimed=fair.claims.has(key)
+	if bool(result.claimed): result.reason="Already shown today. Visit the fair again tomorrow."; return result
+	var reason: String = _fair_plant_reason(plant_id)
+	if not reason.is_empty(): result.reason=reason; return result
+	if not Fair.meets(request,plants[plant_id]): result.reason=Fair.mismatch(request,plants[plant_id]); return result
+	result.eligible=true
+	result.reason="A perfect match. Show this plant and collect your thank-you gift. You keep the plant."
+	return result
+
+func _fair_award(rewards: Dictionary) -> void:
+	market.coins=int(market.coins)+int(rewards.coins)
+	resources.sunlight=int(resources.sunlight)+int(rewards.sunlight)
+	resources.grafts=int(resources.grafts)+int(rewards.grafts)
+	resources.agents=int(resources.agents)+int(rewards.agents)
+
+func fair_claim(key: String,plant_id: String) -> Dictionary:
+	var preview: Dictionary = fair_preview(key,plant_id)
+	if not bool(preview.eligible): return _failure(str(preview.reason))
+	var rewards: Dictionary = preview.rewards.duplicate(true)
+	fair.claims[key]={"plant_id":plant_id,"day":int(preview.request.day),"at":int(Time.get_unix_time_from_system()),"rewards":rewards.duplicate(true)}
+	_fair_award(rewards)
+	save_game()
+	return {"ok":true,"message":"%s delighted the fair! Your plant stays with you. +%d coins and +%d gathered light." % [plants[plant_id].name,int(rewards.coins),int(rewards.sunlight)],"rewards":rewards,"coins":market_wallet(),"plant_id":plant_id,"key":key}
+
+func fair_ribbons() -> Array:
+	var result: Array = Fair.ribbon_definitions()
+	var patterns: Dictionary = {}
+	for entries: Array in collection_seen.values():
+		for pattern: Variant in entries:
+			if pattern in PATTERNS: patterns[pattern]=true
+	var species_count: int = 0
+	for founding: Dictionary in SPECIES:
+		if discovered.has(founding.name): species_count+=1
+	for ribbon: Dictionary in result:
+		ribbon["earned"]=fair.ribbons.has(ribbon.key)
+		ribbon["eligible_ids"]=[]
+		if str(ribbon.criterion)=="patterns": ribbon["progress"]=patterns.size()
+		elif str(ribbon.criterion)=="species": ribbon["progress"]=species_count
+		else:
+			ribbon.eligible_ids=_fair_eligible_ids(ribbon)
+			ribbon["progress"]=ribbon.eligible_ids.size()
+		ribbon["eligible"]=not bool(ribbon.earned) and int(ribbon.progress)>=int(ribbon.target)
+		ribbon["reason"]="This ribbon is already yours." if bool(ribbon.earned) else ("Your gardening achievement is ready to celebrate." if bool(ribbon.eligible) else str(ribbon.goal))
+	return result
+
+func fair_claim_ribbon(key: String) -> Dictionary:
+	var ribbon: Dictionary = {}
+	for definition: Dictionary in fair_ribbons():
+		if str(definition.key)==key: ribbon=definition; break
+	if ribbon.is_empty(): return _failure("Choose a ribbon from the garden fair.")
+	if not bool(ribbon.eligible): return _failure(str(ribbon.reason))
+	var rewards: Dictionary = ribbon.reward.duplicate(true)
+	fair.ribbons[key]={"at":int(Time.get_unix_time_from_system()),"rewards":rewards.duplicate(true)}
+	_fair_award(rewards)
+	save_game()
+	return {"ok":true,"message":"Ribbon earned: %s. +%d coins and +%d gathered light." % [ribbon.title,int(rewards.coins),int(rewards.sunlight)],"rewards":rewards,"coins":market_wallet(),"key":key}
+
 func plant_measurements(id: String) -> Dictionary:
 	return Care.measurements(get_plant(id))
 
@@ -286,6 +566,8 @@ func care_status(id: String,tool_key: String) -> Dictionary:
 	result.cooldown_remaining=maxi(0,ceili(float(care.get("cooldowns",{}).get(tool_key,0))-now))
 	if bool(life_profile(id).withered): result.reason="Withered plants cannot receive care. Grow their seeds to continue the lineage."; return result
 	if count>=int(definition.max_uses): result.reason="This plant has received the maximum number of uses for this tool."; return result
+	if tool_key in ["water","longevity"] and int(care.get("life_bonus_seconds",0))+(60 if tool_key=="water" else 600)>2100:
+		result.reason="This plant already has its full lifetime care reserve."; return result
 	if int(result.cooldown_remaining)>0: result.reason="This tool will be ready for this plant in %d seconds." % int(result.cooldown_remaining); return result
 	if tool_key=="sunlamp" and (bool(plant.get("mature",false)) or int(plant.get("ready_at",0))<=now): result.reason="The sun lamp is for a seedling that is still growing."; return result
 	if tool_key=="ripening":
@@ -460,7 +742,7 @@ func crossbreed(id_a: String, id_b: String) -> Dictionary:
 		return _failure("Both parents must finish growing first.")
 	if bool(a.get("withered",false)) or bool(b.get("withered",false)): return _failure("Withered plants remain in the lineage archive. Grow their seeds to continue breeding.")
 	if int(resources.sunlight) < 30:
-		return _failure("Crossbreeding needs 30 gathered light. Battles and display rewards replenish it.")
+		return _failure("Crossbreeding needs 30 gathered light. Harvest fruit, visit the garden fair, or collect display rewards.")
 	var p: Dictionary = _make_offspring(a, b, random.randi())
 	resources.sunlight -= 30
 	_add_plant(p)
@@ -640,7 +922,7 @@ func _genome_seed(embryo: Dictionary,kind: String,parent_names: Array) -> Dictio
 	# so numeric allele types do not change when a fruit/seed is later reloaded.
 	return JSON.parse_string(JSON.stringify(snapshot))
 
-func pollinate(id_a: String,id_b: String) -> Dictionary:
+func pollinate(id_a: String,id_b: String,save_after: bool = true) -> Dictionary:
 	if not owns_plant(id_a) or not owns_plant(id_b): return _failure("Choose two plants that belong to your garden.")
 	var a: Dictionary = get_plant(id_a)
 	var b: Dictionary = get_plant(id_b)
@@ -663,7 +945,7 @@ func pollinate(id_a: String,id_b: String) -> Dictionary:
 	batch = JSON.parse_string(JSON.stringify(batch))
 	pollinations[id_a] = batch
 	resources.sunlight -= POLLINATION_COST
-	save_game()
+	if save_after: save_game()
 	return {"ok":true,"fruit_id":id,"batch":batch.duplicate(true),"ready_at":batch.ready_at,
 		"message":"Pollination recorded. A hybrid fruit will ripen in 18 seconds, holding two seeds. Both parents remain."}
 
@@ -807,7 +1089,7 @@ func mutate(id: String, agent: String = "radiation", slot: String = "pattern") -
 		return _failure("Choose a plant to expose.")
 	if bool(p.get("withered",false)): return _failure("A withered plant cannot be mutated. Plant its seeds to continue the lineage.")
 	if int(resources.agents) <= 0:
-		return _failure("Mutation needs one agent. Display milestones and battles can award more.")
+		return _failure("Mutation needs one agent. Garden fair gifts, market purchases, and display milestones can provide more.")
 	_record_collection(p)
 	resources.agents -= 1
 	var roll: float = random.randf()
@@ -902,7 +1184,7 @@ func _valid_planting_seed(snapshot: Dictionary) -> bool:
 			if not parent_id is String or not plants.has(parent_id): return false
 	return true
 
-func plant_seed(index: int,target_cell: int = -1) -> Dictionary:
+func plant_seed(index: int,target_cell: int = -1,save_after: bool = true) -> Dictionary:
 	if index < 0 or index >= seed_bank.size():
 		return _failure("Choose a seed from the bank.")
 	if target_cell < -1 or target_cell>=bed.size(): return _failure("Choose an empty garden plot to plant this seed.")
@@ -944,6 +1226,7 @@ func plant_seed(index: int,target_cell: int = -1) -> Dictionary:
 			p.generation = parent_generation+1
 		p.name = _offspring_name(random)
 	p.mature = false
+	p["origin"]={"kind":"seed","seed_id":str(snapshot.get("id","")),"fruit_kind":str(snapshot.get("kind","founding"))}
 	p["care"] = Care.default_care()
 	Care.initialize(p)
 	p.ready_at = int(Time.get_unix_time_from_system())+GROW_SECONDS
@@ -956,7 +1239,7 @@ func plant_seed(index: int,target_cell: int = -1) -> Dictionary:
 		for cell in range(bed.size()):
 			if str(bed[cell]).is_empty(): planted_cell=cell; break
 	if planted_cell>=0: bed[planted_cell]=p.id
-	save_game()
+	if save_after: save_game()
 	return {"ok": true, "message": "%s has taken root. It will mature in 12 seconds." % p.name, "plant": p,"plant_id":str(p.id),"bed_index":planted_cell}
 
 func display_score() -> Dictionary:
@@ -1103,56 +1386,6 @@ func claim_collection() -> Dictionary:
 	resources.agents += agent_count
 	save_game()
 	return {"ok": true, "message": "Collection milestones: %s. +%d seeds and +%d mutation agents." % [", ".join(names), seed_count, agent_count], "seeds": seed_count, "agents": agent_count, "earned": names}
-
-func battle_reward(won: bool) -> Dictionary:
-	battles += 1
-	var light: int = 55 if won else 25
-	resources.sunlight += light
-	if won:
-		wins += 1
-	var species_index: int = (battles + 2) % SPECIES.size()
-	var seed_rarity: String = "Rare" if won and wins % 3 == 0 else ("Uncommon" if won else "Common")
-	seed_bank.append(_make_seed(species_index, seed_rarity))
-	resources.grafts += 1
-	if won and wins % 2 == 0:
-		resources.agents += 1
-	save_game()
-	return {"ok": true, "message": "+%d gathered light · +1 %s seed · +1 grafting material%s" % [light, SPECIES[species_index].name, " · +1 agent" if won and wins % 2 == 0 else ""], "sunlight": light, "seed": seed_bank[-1]}
-
-
-func generate_opponent(team_size: int = 3) -> Array:
-	# This pure snapshot uses the player's breeding rules, never artificial level scaling.
-	# Every ID is external to the owned archive; scouting has no persistent side effects.
-	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
-	rng.seed = 93017 + battles * 8191 + wins * 3571
-	var result: Array = []
-	var themed: bool = battles >= 2 and battles % 3 == 2
-	var theme_index: int = [3, 5, 2, 4][rng.randi_range(0, 3)]
-	var max_species: int = mini(6, 2 + battles)
-	var target_generation: int = mini(4, 1 + int(battles / 3))
-	for i in range(clampi(team_size, 1, 9)):
-		var species_index: int = i % 3 if battles == 0 else (theme_index if themed else rng.randi_range(0, max_species))
-		var prefix: String = "enemy_%d_%d_%d" % [battles, wins, i]
-		var p: Dictionary = _create_base(species_index, maxi(1, rng.randi()), prefix + "_g1")
-		var pedigree: Dictionary = {}
-		p.name = _offspring_name(rng)
-		p.born_at = 0
-		p.ready_at = 0
-		for generation in range(2, target_generation + 1):
-			var donor_index: int = species_index if themed else rng.randi_range(0, max_species)
-			var donor: Dictionary = _create_base(donor_index, maxi(1, rng.randi()), prefix + "_donor%d" % generation)
-			donor.name = _offspring_name(rng)
-			donor.born_at = 0
-			donor.ready_at = 0
-			pedigree[p.id] = p
-			pedigree[donor.id] = donor
-			p = _make_offspring(p, donor, maxi(1, rng.randi()), prefix + "_g%d" % generation)
-			p.mature = true
-			p.born_at = 0
-			p.ready_at = 0
-		p["pedigree"] = pedigree
-		result.append(p)
-	return result
 
 func _make_seed(species_index: int, rarity: String) -> Dictionary:
 	var s: Dictionary = SPECIES[species_index]
@@ -1430,7 +1663,12 @@ func preview_wild_plant(biome: String = "Mosswood", site_id: String = "") -> Dic
 	var organism_seed: int = maxi(1, absi(("%d/%s/%d" % [preview_expedition.map_seed, site_id, preview_expedition.respawn_day]).hash()))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = organism_seed
-	var pool: Array = WILD_BIOMES[biome]
+	# A place's terrain predicts its resident plant family. Preserve the original
+	# lottery for patches already started in an older save, including a same-day
+	# return after leaving an encounter; active specimens above remain exact.
+	var prior_records: Dictionary = preview_expedition.get("site_records",{})
+	var legacy_patch: bool = prior_records.has(site_id) and not prior_records[site_id].has("ecology_version")
+	var pool: Array = WILD_BIOMES[biome] if legacy_patch else Habitat.species_pool(biome,site_id)
 	var species_index: int = int(pool[rng.randi_range(0, pool.size() - 1)])
 	# The first reachable patch is a readable, familiar organism; later biomes expand the atlas.
 	if site_id == "moss_01": species_index = 0
@@ -1456,6 +1694,11 @@ func preview_wild_plant(biome: String = "Mosswood", site_id: String = "") -> Dic
 			p.genes.glow.dominant = "Pulsing core"
 	p.rarity = _calculate_rarity(p)
 	p["origin"] = {"kind": "wild", "biome": biome, "site": site_id, "found_at": int(Time.get_unix_time_from_system())}
+	if not legacy_patch:
+		var habitat: Dictionary = Habitat.patch(biome,site_id)
+		p.origin["habitat_key"] = str(habitat.id)
+		p.origin["habitat"] = str(habitat.name)
+		p.origin["landscape"] = str(habitat.landscape)
 	return p
 
 func wild_encounter(biome: String = "Mosswood", site_id: String = "") -> Dictionary:
@@ -1470,6 +1713,7 @@ func wild_encounter(biome: String = "Mosswood", site_id: String = "") -> Diction
 	var record: Dictionary = expedition.site_records.get(site_id, {"attempts": 0, "observed": false, "fled": false})
 	if bool(record.get("fled", false)): return _failure("The plant withdrew into its roots. This patch will regrow next field day.")
 	var p: Dictionary = preview_wild_plant(biome,site_id)
+	if p.origin.has("habitat_key"): record["ecology_version"]=1
 	var organism_seed: int = int(p.seed)
 	var observed: bool = bool(record.get("observed", false))
 	var chance: float = minf(0.98, float(WILD_CATCH_CHANCES.get(p.rarity, 0.90)) + (0.15 if observed else 0.0))
@@ -1542,7 +1786,7 @@ func resolve_wild_capture(method: String = "gather") -> Dictionary:
 		expedition.active_encounter = {}
 		save_game()
 		return {"ok": true, "caught": true, "fled": false, "plant": p, "chance": chance,
-			"message": "%s joined your living collection. Its wild genes are ready to battle, display, and breed." % p.name}
+			"message": "%s joined your living collection. Its wild genes are ready to grow, display, and breed." % p.name}
 	var fled: bool = rng.randf() < 0.25
 	record.fled = fled
 	expedition.site_records[site] = record
@@ -1576,7 +1820,7 @@ func field_status() -> Dictionary:
 func save_game() -> void:
 	var payload: Dictionary = {
 		"version": SAVE_VERSION, "plants": plants, "bed": bed,
-		"display_bed": display_bed, "resources": resources, "market":market,
+		"display_bed": display_bed, "resources": resources, "market":market, "fair":fair, "adventure":adventure,
 		"seed_bank": seed_bank, "wins": wins, "battles": battles,
 		"fruit_inventory":fruit_inventory,"fruit_crops":fruit_crops,"pollinations":pollinations,"reproduction_counter":reproduction_counter,
 		"discovered": discovered, "claimed": claimed, "plant_order": plant_order,
@@ -1611,6 +1855,8 @@ func load_game() -> bool:
 	display_bed = payload.display_bed
 	resources = payload.resources
 	market = payload.get("market",Market.default_market())
+	fair = payload.get("fair",Fair.default_fair())
+	adventure = payload.get("adventure",Adventure.default_adventure())
 	seed_bank = payload.seed_bank
 	wins = int(payload.get("wins", 0))
 	battles = int(payload.get("battles", 0))
@@ -1668,6 +1914,8 @@ func _valid_save(value: Variant) -> bool:
 	if not data.get("plants", null) is Dictionary or not data.get("resources", null) is Dictionary:
 		return false
 	if data.has("market") and not Market.valid_market(data.market): return false
+	if data.has("fair") and not Fair.valid_fair(data.fair,data.plants): return false
+	if data.has("adventure") and not Adventure.valid_adventure(data.adventure,data.plants): return false
 	if not data.get("bed", null) is Array or data.bed.size() != 9:
 		return false
 	if not data.get("display_bed", null) is Array or data.display_bed.size() != 6:
