@@ -6,8 +6,8 @@ const INK := Color("284838")
 const MUTED := Color("617957")
 const WARM := Color("a4542b")
 const TOOLS := [
-	{"key":"water","name":"Watering can","tag":"A little drink, a little extra time.","description":"Adds 1 minute of life. Free, with a 60-second refill. Up to 5 drinks per plant.","color":"dcf1ea"},
-	{"key":"longevity","name":"Life tonic","tag":"More time with your favorite plant.","description":"Adds 10 minutes before aging and withering. Up to 3 doses per plant.","color":"ffe2d4"},
+	{"key":"water","name":"Watering can","tag":"A little drink, a little extra time.","description":"Adds 0.2 garden days of life. Free; refills in 60 seconds or next morning. Up to 5 drinks per plant.","color":"dcf1ea"},
+	{"key":"longevity","name":"Life tonic","tag":"More time with your favorite plant.","description":"Adds 2 garden days before aging and withering. Up to 3 doses per plant.","color":"ffe2d4"},
 	{"key":"growth","name":"Stretch feed","tag":"Go on. Grow a little taller!","description":"Adds 15% of its natural height each time. Up to 4 feeds per plant.","color":"fff0b8"},
 	{"key":"compost","name":"Chunky compost","tag":"Big leaves. Happy roots.","description":"Adds 20% of its natural weight each time. Up to 4 scoops per plant.","color":"e6edbc"},
 	{"key":"sunlamp","name":"Sunshine lamp","tag":"Hello, grown-up leaves!","description":"Instantly grows a seedling into a mature plant, ready to breed.","color":"fff0b8"},
@@ -53,8 +53,8 @@ static func _benefit(key: String,m: Dictionary,life: Dictionary) -> String:
 		"compost":
 			if float(m.get("weight_bonus",0))>=0.799: return "Maximum weight reached. Looking lush!"
 			return "Full-grown weight: %s → %s g" % [_number(float(m.get("mature_weight_g",0))),_number(float(m.get("mature_weight_g",0))+float(m.get("natural_weight_g",0))*0.20)]
-		"water": return "+1 minute of life"
-		"longevity": return "+10 minutes of life"
+		"water": return "+0.2 garden days of life"
+		"longevity": return "+2 garden days of life"
 		"sunlamp": return "Seedling → ready to breed"
 		_: return "Growing fruit → ripe fruit"
 
@@ -62,7 +62,7 @@ static func life_text(g: Control,id: String) -> String:
 	var life: Dictionary = g.state.life_profile(id)
 	if str(life.get("stage",""))=="withered": return "Resting in the archive"
 	var seconds: int = maxi(0,ceili(float(life.get("remaining",0))))
-	return "%d min %02d sec" % [seconds/60,seconds%60]
+	return "%d mornings left" % maxi(1,ceili(float(seconds)/g.state.GARDEN_DAY_AGE))
 
 static func status_text(status: Dictionary) -> String:
 	return "Ready! %d / %d uses left" % [int(status.get("remaining_uses",0)),int(status.get("max_uses",0))] if status.get("allowed",false) else str(status.get("reason",""))
@@ -124,9 +124,9 @@ static func show(g: Control,id: String = "",feedback: String = "") -> void:
 	_measurement(g,measures,"WEIGHT","%s g" % _number(float(data.get("weight_g",0))),"weight")
 	var life_row := HBoxContainer.new()
 	g.modal_content.add_child(life_row)
-	_measurement(g,life_row,"LIFE LEFT · WHILE YOU PLAY",life_text(g,chosen),"life")
-	var bonus_minutes: int = roundi(float(p.get("care",{}).get("life_bonus_seconds",0))/60.0)
-	if bonus_minutes>0: g.modal_content.add_child(g._wrap("Care has added %d extra minutes to this plant's life." % bonus_minutes,13,WARM))
+	_measurement(g,life_row,"LIFE LEFT · AT YOUR PACE",life_text(g,chosen),"life")
+	var bonus_days: float = float(p.get("care",{}).get("life_bonus_seconds",0))/g.state.GARDEN_DAY_AGE
+	if bonus_days>0: g.modal_content.add_child(g._wrap("Care has added %.1f extra garden days to this plant's life." % bonus_days,13,WARM))
 	g.modal_content.add_child(g._wrap("Pick a tool. Watch your plant change!",19,INK))
 	g.modal_content.add_child(g._wrap("Every plant has its own natural size. Care makes this individual bigger or longer-lived; its seeds still inherit its DNA.",12,MUTED))
 	if p.get("withered",false):

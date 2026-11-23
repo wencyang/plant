@@ -18,6 +18,7 @@ const FairUI = preload("res://scripts/garden_fair_panel.gd")
 const Habitat = preload("res://scripts/habitat_catalog.gd")
 const HabitatScene = preload("res://scripts/habitat_scene.gd")
 const AdventureUI = preload("res://scripts/adventure_panel.gd")
+const FieldMenu = preload("res://scripts/field_menu_panel.gd")
 const INK := Color("284838")
 const MUTED := Color("617957")
 const AMBER := Color("a4542b")
@@ -112,6 +113,11 @@ var adventuring: bool = false
 var adventure_mother: String = ""
 var adventure_father: String = ""
 var adventure_entry: Button
+var garden_menu_button: Button
+var quick_actions: HBoxContainer
+var quick_harvest: Button
+var field_bag_target: String=""
+var garden_activity: Label
 
 func _ready() -> void:
 	if state.save_path == State.SAVE_PATH and DisplayServer.get_name() != "headless": Locale.load_settings()
@@ -141,9 +147,17 @@ func _ready() -> void:
 	_refresh()
 	resized.connect(_responsive)
 	call_deferred("_responsive")
-	adventure_entry.grab_focus()
+	plant_button.grab_focus()
 	get_tree().auto_accept_quit = false
 	call_deferred("_localize_ui")
+	if should_start_in_field(): call_deferred("_enter_journey")
+
+func should_start_in_field() -> bool:
+	return state.save_path==State.SAVE_PATH and not OS.get_cmdline_args().has("--script")
+
+func _enter_journey() -> void:
+	if not state.expedition.get("active_encounter",{}).is_empty(): _open_wilderness()
+	else: _open_adventure()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
@@ -255,7 +269,7 @@ func _build_ui() -> void:
 	brand_label = brand
 	brand.tooltip_text = "The Quiet Conservatory · grow, explore, and make plant friends"
 	top.add_child(brand)
-	adventure_entry=_button("Stream story →",_open_adventure,Vector2(132,30))
+	adventure_entry=_button("Living valley →",_open_adventure,Vector2(132,30))
 	adventure_entry.set_meta("adventure_action","open")
 	adventure_entry.tooltip_text="Grow a way across the stream."
 	adventure_entry.add_theme_stylebox_override("normal",_style(Color("ffd399"),Color("ba925b"),0,10,5))
@@ -263,7 +277,9 @@ func _build_ui() -> void:
 	_spacer(top)
 	resources_label = _label("", 14, Color("c4cbb2"))
 	top.add_child(resources_label)
-	display_settings_button = _button("Settings", _open_settings, Vector2(82,26))
+	display_settings_button = _button("More", _open_garden_menu, Vector2(70,32))
+	garden_menu_button=display_settings_button
+	garden_menu_button.set_meta("garden_action","more")
 	display_settings_button.add_theme_font_size_override("font_size",12)
 	display_settings_button.add_theme_stylebox_override("normal",_style(Color("1c3128"),Color("4b6250"),0,8,4))
 	top.add_child(display_settings_button)
@@ -271,15 +287,17 @@ func _build_ui() -> void:
 	title_row = HBoxContainer.new()
 	root.add_child(title_row)
 	var titles := VBoxContainer.new()
+	titles.size_flags_horizontal=Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 3)
 	title_row.add_child(titles)
 	tagline_label = _label("A LITTLE SUNSHINE. A LOT OF POSSIBILITIES.",10,MUTED)
 	titles.add_child(tagline_label)
-	heading = _label("Quiet Conservatory", 36, INK, true)
+	heading = _label("My garden", 36, INK, true)
 	titles.add_child(heading)
-	helper_label = _label("Tap an empty plot to plant a seed. Tap a plant to care for it.", 13, MUTED)
+	helper_label = _label("Tap empty soil to plant. Tap a plant to look after it.", 14, MUTED)
 	titles.add_child(helper_label)
-	_spacer(title_row)
+	# The title uses the row width; a second expanding spacer squeezed hints
+	# into half of a phone screen.
 	var score_box := VBoxContainer.new()
 	collection_box = score_box
 	score_box.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -287,6 +305,13 @@ func _build_ui() -> void:
 	score_box.add_child(_label("LIVING COLLECTION", 10, MUTED))
 	score_label = _label("", 22, AMBER, true)
 	score_box.add_child(score_label)
+	quick_actions=HBoxContainer.new()
+	quick_actions.set_meta("garden_role","quick_actions")
+	quick_actions.add_theme_constant_override("separation",6)
+	root.add_child(quick_actions)
+	quick_harvest=_menu_action(quick_actions,"Fruit & seeds","harvest",_open_seeds)
+	_menu_action(quick_actions,"Party","party",func(): _show_party())
+	_menu_action(quick_actions,"Bag","bag",func(): _open_field_bag())
 	main_row = HBoxContainer.new()
 	main_row.add_theme_constant_override("separation", 22)
 	main_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -402,6 +427,12 @@ func _build_ui() -> void:
 	primary_button.add_theme_stylebox_override("hover",_style(Color("ffdda7"),Color("c88a4e"),0,12,12))
 	footer_row.add_child(primary_button)
 	for action in footer_row.get_children(): action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Three everyday actions. Collection management has its own screen.
+	plant_button.reparent(footer_row)
+	adventure_entry.reparent(footer_row)
+	footer_row.move_child(plant_button,0)
+	footer_row.move_child(breeding_button,1)
+	footer_row.move_child(adventure_entry,2)
 	toast_panel = PanelContainer.new()
 	toast_panel.add_theme_stylebox_override("panel", _style(Color("2c4030"), Color("8d9e6f"), 6, 22, 14))
 	toast_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -416,22 +447,31 @@ func _responsive() -> void:
 	var short_window: bool = not small_layout and size.y < 960
 	var very_short: bool = not small_layout and size.y < 850
 	display_settings_button.visible = true
-	display_settings_button.text = "···" if small_layout else "Settings"
-	display_settings_button.custom_minimum_size.x = 32 if small_layout else 82
-	adventure_entry.text="Adventure" if small_layout else "Stream story →"
-	adventure_entry.custom_minimum_size.x=94 if small_layout else 132
-	adventure_entry.add_theme_font_size_override("font_size",12 if small_layout else 13)
+	display_settings_button.text = "More"
+	display_settings_button.custom_minimum_size.x = 66
+	adventure_entry.text="Explore"
+	adventure_entry.custom_minimum_size.x=0
+	adventure_entry.add_theme_font_size_override("font_size",14)
 	sidebar.visible = not small_layout
+	sidebar.custom_minimum_size.x=270
+	quick_actions.visible=small_layout
+	for button: Control in quick_actions.get_children():
+		button.custom_minimum_size=Vector2(0,34)
+		button.add_theme_font_size_override("font_size",12)
 	heading.add_theme_font_size_override("font_size", 24 if small_layout or very_short else (30 if short_window else 34))
 	root_column.add_theme_constant_override("separation", 5 if small_layout else (6 if very_short else (8 if short_window else 10)))
-	tagline_label.visible = not small_layout
+	tagline_label.visible = false
 	display_grid.custom_minimum_size.y = 82 if small_layout else (72 if short_window else 108)
-	display_heading.visible = true
-	brand_label.visible = not small_layout
+	display_heading.visible = not small_layout
+	display_grid.visible = not small_layout
+	tray_panel.visible = false
+	brand_label.visible = false
 	collection_box.visible = not small_layout
+	status_label.visible = false
 	tray_hint.visible = not small_layout
 	tray_scroll.custom_minimum_size.y = 116 if small_layout or short_window else 132
-	helper_label.visible = size.x > 700 and not very_short
+	helper_label.visible = true
+	helper_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
 	display_caption.visible = true
 	if small_layout: display_caption.text = "Beauty %d · Observe" % int(state.display_score().get("total",0))
 	else: display_caption.text = "Garden stars · Collect rewards"
@@ -448,23 +488,30 @@ func _responsive() -> void:
 		if b is Button:
 			b.custom_minimum_size.x = 0 if small_layout else (160 if b == breeding_button else (130 if b == nursery_button else (150 if b == primary_button else 100)))
 			b.add_theme_font_size_override("font_size", 11 if small_layout else 14)
-	footer_row.columns = 3 if small_layout else 6
+	footer_row.columns = 3
 	footer_row.add_theme_constant_override("h_separation",6 if small_layout else 12)
 	footer_row.add_theme_constant_override("v_separation",6)
 	care_button.text = "Tools" if small_layout else "Tool shed"
 	care_button.disabled = false
-	care_button.visible = true
+	care_button.visible = false
 	plant_button.visible = true
 	plant_button.disabled = false
 	garden_hint_label.visible = not small_layout
 	market_button.disabled = false
-	breeding_button.text = "Breed" if small_layout else "Crossbreeding"
+	breeding_button.text = "Cross"
 	breeding_button.disabled = false
 	_refresh_reproduction_counters()
 	explore_button.text = "Explore" if small_layout else "Explore wilds →"
-	explore_button.visible = true
+	explore_button.visible = false
 	explore_button.disabled = false
 	_refresh_fair_counters()
+	market_button.visible=false
+	nursery_button.visible=false
+	primary_button.visible=false
+	for button: Button in [plant_button,breeding_button,adventure_entry]:
+		button.custom_minimum_size=Vector2(0,50)
+		button.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+		button.add_theme_font_size_override("font_size",14)
 	if is_instance_valid(modal): _position_modal()
 	var toast_width: float = minf(480,size.x-24)
 	toast_label.custom_minimum_size.x = minf(340,maxf(1,toast_width-44))
@@ -552,11 +599,11 @@ func _life_note(id: String) -> String:
 	var remaining: int = maxi(0,int(life.get("remaining",0)))
 	match str(life.get("stage","mature")):
 		"seedling": return "Seedling · growing toward maturity"
-		"aging": return "Aging · %02d:%02d until natural withering" % [remaining/60,remaining%60]
+		"aging": return "Aging · %d mornings until natural withering" % maxi(1,ceili(float(remaining)/State.GARDEN_DAY_AGE))
 		"withered": return "Withered · DNA and pedigree remain in the archive"
 		_:
 			remaining = maxi(0,ceili(float(life.get("aging_at",State.AGING_SECONDS))-float(life.get("age",0))))
-			return "Mature · %02d:%02d until aging" % [remaining/60,remaining%60]
+			return "Mature · %d mornings until aging" % maxi(1,ceili(float(remaining)/State.GARDEN_DAY_AGE))
 
 func _live_life_label(id: String) -> Label:
 	var note: Label = _wrap(_life_note(id),12,MUTED)
@@ -590,7 +637,15 @@ func _harvest_button(id: String) -> Button:
 func _refresh_reproduction_counters() -> void:
 	var overview: Dictionary = state.fruit_overview()
 	var stored: int = int(overview.get("fruits",0))
-	resources_label.text = ("LIGHT %d · FRUIT %d · SEEDS %d" if small_layout else "Gathered light  %d    /    Fruit  %d    /    Seeds  %d") % [state.resources.sunlight,stored,state.seed_bank.size()]
+	resources_label.text = ("Light %d · Coins %d" % [int(state.resources.sunlight),state.market_wallet()]) if small_layout else ("Light %d · Coins %d · Kits %d" % [int(state.resources.sunlight),state.market_wallet(),state.field_kits])
+	if is_instance_valid(quick_harvest):
+		quick_harvest.text="Harvest %d" % int(overview.get("ready",0)) if int(overview.get("ready",0))>0 else "Fruit & seeds"
+	if is_instance_valid(garden_activity):
+		var growing: int=0
+		for id: String in state.plant_order:
+			if state.owns_plant(id) and not state.get_plant(id).get("mature",false) and not state.get_plant(id).get("withered",false): growing+=1
+		garden_activity.text="%d fruit ready · %d seedlings growing" % [int(overview.get("ready",0)),growing]
+		Locale.apply_tree(garden_activity)
 	Locale.apply_tree(resources_label)
 	if is_instance_valid(market_button):
 		market_button.text = "Market" if small_layout else "Market · %d coins" % state.market_wallet()
@@ -856,8 +911,8 @@ func _apply_care(id: String,tool_key: String) -> void:
 		match tool_key:
 			"growth": message = "%s stretched from %s to %s cm!" % [state.get_plant(id).name,CareUI._number(float(before.height_cm)),CareUI._number(float(after.height_cm))]
 			"compost": message = "%s grew from %s to %s g!" % [state.get_plant(id).name,CareUI._number(float(before.weight_g)),CareUI._number(float(after.weight_g))]
-			"water": message = "A refreshing drink! %s gets one more minute of life." % state.get_plant(id).name
-			"longevity": message = "Ten more minutes of growing together with %s!" % state.get_plant(id).name
+			"water": message = "A refreshing drink! %s gets 0.2 more garden days of life." % state.get_plant(id).name
+			"longevity": message = "Two more garden days of growing together with %s!" % state.get_plant(id).name
 			"sunlamp": message = "%s is all grown up and ready to breed!" % state.get_plant(id).name
 			"ripening": message = "Fruit's ready! Time to harvest %s's fruit." % state.get_plant(id).name
 		_play_sound("bloom" if tool_key in ["growth","sunlamp","ripening"] else "ui")
@@ -903,78 +958,140 @@ func _append_reproduction_block(target: VBoxContainer,p: Dictionary) -> void:
 
 func _refresh_side() -> void:
 	_clear(side_content)
-	if selected_id != "" and _owns_plant(selected_id):
-		var p: Dictionary = state.get_plant(selected_id)
-		side_content.add_child(_label("SAY HELLO TO YOUR PLANT", 10, MUTED))
-		var art := Portrait.new()
-		art.plant = p
-		art.custom_minimum_size = Vector2(240, 228)
-		side_content.add_child(art)
-		side_content.add_child(_label(str(p.name), 25, INK, true))
-		side_content.add_child(_button("Say hello to this plant",func(): _say_hello(str(p.id))))
-		side_content.add_child(_label("%s · %s · GENERATION %d" % [p.type, p.rarity, p.generation], 11, AMBER))
-		side_content.add_child(_wrap("%s tissue · %s pattern" % [_gene(p,"texture"), _gene(p,"pattern")], 13))
-		_append_reproduction_block(side_content,p)
-		_line(side_content)
-		side_content.add_child(_wrap(_talents_text(p.get("skills",[])), 13, Color("b6c5a3")))
-		side_content.add_child(_wrap("Vitality %d   Growth %d   Bloom %d" % [p.stats.vitality, p.stats.growth, p.stats.bloom], 12))
-		var actions := HBoxContainer.new()
-		side_content.add_child(actions)
-		actions.add_child(_button("Examine", func(): _open_detail(selected_id)))
-		actions.add_child(_button("Breed", func(): _breed_from(selected_id)))
-		actions.add_child(_button("Move", func(): moving = true; _toast("Choose a soil cell or display slot for " + str(p.name))))
-		if not p.get("mature", true): side_content.add_child(_button("Nurture · 5 light", func(): _perform_nurture(selected_id)))
-		if state.display_bed.has(selected_id): side_content.add_child(_button("Lift from display bed",func(): state.remove_from_display(selected_id); selected_id = ""; _refresh()))
-		side_content.add_child(_button("Return to garden notes", func(): selected_id = ""; moving = false; _refresh_side()))
-	else:
-		side_content.add_child(_label("LET'S GROW SOMETHING WONDERFUL", 10, MUTED))
-		side_content.add_child(_label("Grow your way\nacross the stream.",25,INK,true))
-		side_content.add_child(_wrap("An unusual flower waits on the far bank. Could your next plant family grow a way across?",14))
-		var stream_adventure: Button=_button("Start the stream adventure →",_open_adventure)
-		stream_adventure.set_meta("adventure_action","open")
-		stream_adventure.add_theme_stylebox_override("normal",_style(Color("ffca92"),Color("bc8958"),0,12,12))
-		side_content.add_child(stream_adventure)
-		side_content.add_child(_wrap("Find four plant friends, grow two surprising siblings, and put their inherited traits to work in the landscape.",13,AMBER))
-		var start_planting: Button = _button("Plant a seed →",func(): planting_page=0; _open_planting())
-		start_planting.set_meta("planting_action","open")
-		start_planting.add_theme_stylebox_override("normal",_style(Color("ffcf94"),Color("cb9258"),0,12,12))
-		side_content.add_child(start_planting)
-		side_content.add_child(_wrap("Tap an empty plot → choose a seed → Plant here. Your seedling grows automatically in 12 seconds.",13,INK))
-		side_content.add_child(_button("Meet the Garden Fair visitors →",_open_fair))
-		side_content.add_child(_wrap("Mira, Jun, and Pip would love to meet your plant pals. Show a plant, bring home gifts, and collect ribbons.",13,AMBER))
-		side_content.add_child(_action_button("Open the tool shed",func(): _open_care(),"open_care"))
-		side_content.add_child(_action_button("Visit the Sprout Market",func(): market_page=0; _open_market(),"open_market"))
-		var records: Dictionary = CareUI.garden_records(self)
-		if not str(records.tallest).is_empty():
-			side_content.add_child(_label("YOUR GARDEN GIANTS",11,AMBER))
-			side_content.add_child(_wrap("Tallest: %s · %s cm" % [state.get_plant(str(records.tallest)).name,CareUI._number(float(records.height))],13,INK))
-			side_content.add_child(_wrap("Heaviest: %s · %s g" % [state.get_plant(str(records.heaviest)).name,CareUI._number(float(records.weight))],13,INK))
-		else:
-			side_content.add_child(_wrap("Your seeds are ready for a fresh start.",14,INK))
-			side_content.add_child(_button("Choose a seed to plant",func(): _open_planting()))
-		side_content.add_child(_wrap("Mix two plants → pick their fruit → plant the seeds → meet your new plant pals!",14,INK))
-		var overview: Dictionary = state.fruit_overview()
-		side_content.add_child(_wrap("%d ripe fruit · %d harvested fruit · %d seeds" % [overview.get("ready",0),overview.get("fruits",0),state.seed_bank.size()],13,AMBER))
-		side_content.add_child(_action_button("Choose two parents →",func(): lab_mode="Crossbreed"; _open_lab(),"open_breeding"))
-		side_content.add_child(_action_button("Harvest fruit & sow seeds",_open_seeds,"open_nursery"))
-		_line(side_content)
-		var s: Dictionary = state.display_score()
-		for key in ["diversity", "harmony", "rarity"]:
-			var row := HBoxContainer.new()
-			side_content.add_child(row)
-			row.add_child(_label(key.capitalize(), 13, MUTED))
-			_spacer(row)
-			row.add_child(_label("%02d" % int(s.get(key,0)), 17, Color("bdc99e"), true))
-			side_content.add_child(_meter(float(s.get(key,0)) / 100.0, Color("80936a")))
-		_line(side_content)
-		side_content.add_child(_wrap("Next observation: %d beauty" % state.next_display_threshold() if state.next_display_threshold() > 0 else "Every display milestone recorded.",11,AMBER))
-		side_content.add_child(_button("Gather display rewards", _claim_display))
-		side_content.add_child(_button("Collect daily growth", _collect_daily))
-		side_content.add_child(_button("Field guide",_open_guide))
-		side_content.add_child(_button("Collection book",_open_codex))
-		side_content.add_child(_button("Sound & language",_open_settings))
-		side_content.add_child(_button("Display & resolution",_open_display_settings))
-		side_content.add_child(_wrap("Tap a plant to say hello. Drag it into the grow patch, or grab a tool and help it flourish!", 12))
+	var info: Dictionary=state.adventure_info()
+	side_content.add_child(_label("CURRENT ADVENTURE",10,AMBER))
+	side_content.add_child(_wrap(str(info.get("objective","Grow a way across the stream.")),20,INK))
+	side_content.add_child(_wrap("Day %d · Discover → Cross → Try it outside" % state.garden_day,12,MUTED))
+	_line(side_content)
+	var preview:=VBoxContainer.new()
+	preview.set_meta("garden_role","party_preview")
+	side_content.add_child(preview)
+	preview.add_child(_label("TRAVELING WITH YOU",10,AMBER))
+	var party: Array=state.travel_party() if state.has_method("travel_party") else []
+	if not party.is_empty():
+		var lead: Dictionary=party[0]
+		var art:=Portrait.new()
+		art.plant=lead
+		art.custom_minimum_size=Vector2(0,125)
+		preview.add_child(art)
+		preview.add_child(_wrap(str(lead.name),20,INK))
+		preview.add_child(_wrap("%s · G%d · %d / 6 in party" % [lead.type,int(lead.generation),party.size()],12,MUTED))
+	preview.add_child(_button("Manage party",func(): _show_party()))
+	_line(side_content)
+	var overview: Dictionary=state.fruit_overview()
+	garden_activity=_wrap("%d fruit ready · %d seedlings growing" % [int(overview.get("ready",0)),0],14,AMBER)
+	side_content.add_child(garden_activity)
+	var shortcuts:=GridContainer.new()
+	shortcuts.columns=2
+	shortcuts.add_theme_constant_override("h_separation",6)
+	side_content.add_child(shortcuts)
+	for row: Array in [["Harvest",_open_seeds],["Try a plant",func(): _show_adventure_experiments()],["Next morning",_show_garden_day],["My plants",_open_collection]]:
+		var button: Button=_button(str(row[0]),row[1])
+		button.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+		button.clip_text=true
+		shortcuts.add_child(button)
+	Locale.apply_tree(side_content)
+
+func _show_party(id: String="") -> void:
+	load("res://scripts/field_party_panel.gd").show(self,id)
+
+func _set_party_lead(id: String) -> void:
+	var result: Dictionary=state.set_lead_plant(id)
+	_toast(str(result.get("message","")))
+	if result.get("ok",false):
+		_refresh()
+		if is_instance_valid(adventure_field): adventure_field.refresh()
+	_show_party(id)
+
+func _swap_party_member(slot: int,id: String) -> void:
+	var ids: Array=[]
+	for plant: Dictionary in state.travel_party(): ids.append(str(plant.id))
+	if slot<0 or slot>ids.size() or slot>=6: return
+	if ids.has(id):
+		var old: int=ids.find(id)
+		if slot<ids.size(): ids[old]=ids[slot]; ids[slot]=id
+	elif slot<ids.size(): ids[slot]=id
+	else: ids.append(id)
+	var result: Dictionary=state.set_travel_party(ids)
+	_toast(str(result.get("message","")))
+	if result.get("ok",false):
+		_refresh()
+		if is_instance_valid(adventure_field): adventure_field.refresh()
+	_show_party(id)
+
+func _open_field_bag(id: String="") -> void:
+	FieldMenu.bag(self,id)
+
+func _use_bag_tool(id: String,key: String) -> void:
+	var result: Dictionary=state.apply_care(id,key)
+	_toast(str(result.get("message","")))
+	if result.get("ok",false): _play_sound("water" if key=="water" else "bloom"); _refresh()
+	_open_field_bag(id)
+
+func _pack_field_kits() -> void:
+	var result: Dictionary=state.restock_field_kits()
+	_toast(str(result.get("message","")))
+	_open_field_bag(field_bag_target)
+
+func _open_field_dex(family: String="") -> void:
+	FieldMenu.dex(self,family)
+
+func _open_field_routes() -> void:
+	FieldMenu.routes(self)
+
+func _menu_action(parent: Node,text: String,key: String,callback: Callable) -> Button:
+	var button: Button=_button(text,callback,Vector2(0,52))
+	button.set_meta("garden_action",key)
+	button.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+	button.clip_text=true
+	parent.add_child(button)
+	return button
+
+func _open_garden_menu() -> void:
+	_open_modal("More","garden_menu")
+	var options:=GridContainer.new()
+	options.columns=1 if small_layout else 2
+	options.add_theme_constant_override("h_separation",12)
+	options.add_theme_constant_override("v_separation",10)
+	options.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+	modal_content.add_child(options)
+	_menu_action(options,"My plants & display","collection",_open_collection)
+	_menu_action(options,"Fruit & seeds","harvest",_open_seeds)
+	_menu_action(options,"Tools","tools",func(): _open_care())
+	_menu_action(options,"Market","market",func(): market_page=0; _open_market())
+	_menu_action(options,"Wild trails","wilds",_open_wilderness)
+	_menu_action(options,"Garden Fair","fair",_open_fair)
+	_menu_action(options,"Rewards","rewards",_open_display_notes)
+	_menu_action(options,"Field guide","guide",_open_guide)
+	_menu_action(options,"Settings","settings",_open_settings)
+
+func _open_collection() -> void:
+	_open_modal("My plants & display","collection")
+	modal_content.add_child(_wrap("Display shelf",18,INK))
+	var shelves:=GridContainer.new()
+	shelves.columns=3 if small_layout else 6
+	shelves.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+	shelves.add_theme_constant_override("h_separation",6)
+	shelves.add_theme_constant_override("v_separation",6)
+	shelves.set_meta("collection_role","display")
+	modal_content.add_child(shelves)
+	for index in range(6):
+		var cell: Control=_make_cell(str(state.display_bed[index]),"display",index)
+		cell.custom_minimum_size=Vector2(0,105)
+		shelves.add_child(cell)
+	modal_content.add_child(_wrap("All plants",18,INK))
+	var archive:=GridContainer.new()
+	archive.columns=2 if small_layout else 4
+	archive.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+	archive.add_theme_constant_override("h_separation",8)
+	archive.add_theme_constant_override("v_separation",8)
+	archive.set_meta("collection_role","archive")
+	modal_content.add_child(archive)
+	for id: String in state.plant_order:
+		var cell: Control=_make_cell(id,"tray",0)
+		cell.custom_minimum_size=Vector2(0,140)
+		archive.add_child(cell)
+
 
 func _meter(value: float, color: Color) -> ProgressBar:
 	var bar := ProgressBar.new()
@@ -999,10 +1116,10 @@ func _choose_plant(id: String, zone: String, index: int) -> void:
 		return
 	if not _owns_plant(id): _open_detail(id); return
 	selected_id = id
-	moving = zone == "tray"
-	last_log = "%s selected. %s" % [state.get_plant(id).name, "Choose a soil or display cell to plant." if moving else "Examine its genes, breed, or move it."]
+	moving = false
+	last_log = "%s selected." % str(state.get_plant(id).name)
 	_refresh()
-	if small_layout: _compact_plant(id)
+	_compact_plant(id)
 
 func _drop_plant(id: String, zone: String, index: int) -> void:
 	var ok: bool = false
@@ -1023,20 +1140,32 @@ func _compact_plant(id: String) -> void:
 	if not _owns_plant(id): _open_detail(id); return
 	var p: Dictionary = state.get_plant(id)
 	_open_modal(str(p.name), "specimen")
+	var art:=Portrait.new()
+	art.plant=p
+	art.custom_minimum_size=Vector2(0,170 if small_layout else 210)
+	modal_content.add_child(art)
 	modal_content.add_child(_measurement_label(id))
-	modal_content.add_child(_button("Say hello to this plant",func(): _say_hello(id)))
-	modal_content.add_child(_care_entry(id))
-	modal_content.add_child(_wrap("%s · %s · G%d\n%s pattern · %s\nVitality %d · Growth %d · Bloom %d" % [p.type,p.rarity,p.generation,_gene(p,"pattern"),_talents_text(p.skills),p.stats.vitality,p.stats.growth,p.stats.bloom], 14, INK))
-	modal_content.add_child(_live_life_label(id))
+	var abilities: Dictionary=state.adventure_capabilities(p)
+	if not abilities.get("labels",[]).is_empty():
+		modal_content.add_child(_wrap(" · ".join(PackedStringArray(abilities.labels)),16,AMBER))
+	modal_content.add_child(_button("Try this plant in the playground",func(): _show_adventure_experiments(id)))
 	modal_content.add_child(_live_fruit_label(id))
-	var row := HBoxContainer.new()
+	var ready: bool=int(state.fruit_status(id).get("ready_count",0))>0
+	if ready:
+		modal_content.add_child(_harvest_button(id))
+	else:
+		modal_content.add_child(_care_entry(id))
+	var row:=HBoxContainer.new()
 	modal_content.add_child(row)
-	row.add_child(_button("Detail", func(): _open_detail(id)))
-	row.add_child(_button("Breed", func(): _breed_from(id)))
-	row.add_child(_button("Move", func(): moving = true; _close_modal(); _toast("Choose a soil cell or display slot.")))
-	modal_content.add_child(_action_button("Traits & breeding",func(): _open_dna(id),"view_dna",id))
-	modal_content.add_child(_harvest_button(id))
-	if state.display_bed.has(id): modal_content.add_child(_button("Lift from display bed",func(): state.remove_from_display(id); selected_id = ""; _close_modal(); _refresh()))
+	var cross: Button=_action_button("Cross with another plant",func(): _breed_from(id),"next_cross",id)
+	cross.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+	cross.disabled=not bool(p.get("mature",false)) or bool(p.get("withered",false))
+	reproduction_buttons.append(cross)
+	row.add_child(cross)
+	var more: Button=_button("Traits & more",func(): _open_detail(id))
+	more.set_meta("garden_action","plant_details")
+	more.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+	row.add_child(more)
 
 func _toast(message: String) -> void:
 	toast_label.text = message
@@ -1047,7 +1176,10 @@ func _toast(message: String) -> void:
 
 func _open_modal(title: String, kind: String = "") -> void:
 	_close_modal()
-	if adventuring and is_instance_valid(adventure_field): adventure_field.waiting=true
+	if adventuring and is_instance_valid(adventure_field):
+		adventure_field.waiting=true
+		adventure_field.pause_walking()
+	if exploring and is_instance_valid(wilderness): wilderness.waiting=true
 	modal_kind = kind
 	modal = Control.new()
 	modal.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1091,13 +1223,27 @@ func _open_modal(title: String, kind: String = "") -> void:
 	var tw := panel.create_tween()
 	tw.tween_property(panel, "modulate:a", 1.0, 0.22)
 	call_deferred("_localize_ui")
+	call_deferred("_settle_modal_layout")
+
+func _settle_modal_layout() -> void:
+	# Wrapped text briefly changes minimum sizes while containers sort. Clamp
+	# after that layout as well, so a just-opened sheet never leaves the screen.
+	var opened: Control=modal
+	for pass_index in range(3):
+		await get_tree().process_frame
+		if not is_instance_valid(opened) or modal!=opened: return
+		_position_modal()
 
 func _position_modal() -> void:
 	if not is_instance_valid(modal): return
 	var panel: Control = modal.get_node("Panel")
 	var width: float = minf(860 if modal_kind == "wild_encounter" else 820, size.x - 28)
 	var height: float = minf(820, size.y - 50)
-	if modal_kind == "specimen": height = minf(470,size.y-50)
+	if modal_kind == "specimen": height = minf(530,size.y-50)
+	if modal_kind == "lab" or modal_kind.begins_with("adventure_"): height = minf(680,size.y-36)
+	if modal_kind == "garden_menu": height = minf(420 if not small_layout else 690,size.y-36)
+	if modal_kind in ["specimen","lab"] or modal_kind.begins_with("adventure_"):
+		height=minf(height,maxf(280,panel.get_combined_minimum_size().y+modal_content.get_combined_minimum_size().y))
 	panel.position = Vector2((size.x-width)*0.5, (size.y-height)*0.5)
 	panel.size = Vector2(width, height)
 
@@ -1108,6 +1254,8 @@ func _close_modal() -> void:
 	modal = null
 	modal_kind = ""
 	if adventuring and is_instance_valid(adventure_field): adventure_field.waiting=false
+	if exploring and is_instance_valid(wilderness) and state.expedition.get("active_encounter",{}).is_empty():
+		wilderness.waiting=is_instance_valid(wilderness._atlas) and wilderness._atlas.visible
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F11:
@@ -1182,6 +1330,7 @@ func _open_detail(id: String) -> void:
 		bio.add_child(_button("Save name", func(): state.rename_plant(id,rename.text); _refresh(); _open_detail(id)))
 		bio.add_child(_button("Unpin favorite" if p.get("favorite",false) else "Keep as favorite", func(): state.toggle_favorite(id); _refresh(); _open_detail(id)))
 		bio.add_child(_button("Choose as parent", func(): _breed_from(id)))
+		bio.add_child(_button("Move to another plot",func(): selected_id=id; moving=true; _close_modal(); _toast("Choose a soil cell or display slot.")))
 	if _owns_plant(id): _append_reproduction_block(modal_content,p)
 	else: modal_content.add_child(_action_button("Traits & breeding",func(): _open_dna(id),"view_dna",id))
 	_line(modal_content)
@@ -1269,35 +1418,22 @@ func _open_lab() -> void:
 	if parent_b == "" or not mature.has(parent_b):
 		for id in mature:
 			if id != parent_a: parent_b = str(id); break
-	_open_modal("The propagation laboratory", "lab")
-	modal_content.add_child(_wrap("Any two mature plants can cross. Hybrids can cross with other hybrids, wild plants, or either founding lineage. There is no species pairing lock.",14))
-	modal_content.add_child(_wrap("Light %d · Grafting material %d · Mutation agents %d" % [state.resources.sunlight,state.resources.grafts,state.resources.agents],11,AMBER))
-	var tabs := HBoxContainer.new()
-	modal_content.add_child(tabs)
-	for mode in ["Crossbreed","Graft","Mutate"]:
-		var b := _button(mode, func(): lab_mode = mode; _open_lab())
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		if mode == lab_mode: b.add_theme_color_override("font_color", AMBER)
-		tabs.add_child(b)
-	var parents: BoxContainer = VBoxContainer.new() if small_layout else HBoxContainer.new()
+	_open_modal("Cross two plants" if lab_mode=="Crossbreed" else ("Graft plants" if lab_mode=="Graft" else "Mutate a plant"), "lab")
+	modal_content.add_child(_wrap("Choose two grown plants. Both parents stay with you." if lab_mode!="Mutate" else "Choose a grown plant to change its inherited traits.",14))
+	var parents:=HBoxContainer.new()
+	parents.add_theme_constant_override("separation",10)
 	modal_content.add_child(parents)
 	for which in range(2 if lab_mode != "Mutate" else 1):
 		var parent_id: String = parent_a if which == 0 else parent_b
 		var column := VBoxContainer.new()
 		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		parents.add_child(column)
-		var slot_label: String = ("HOST" if lab_mode == "Graft" else "MOTHER / FRUIT BEARER") if which==0 else ("DONOR" if lab_mode == "Graft" else "FATHER / POLLEN")
-		var choose_slot: Button = _button(slot_label,func(): active_parent_slot=which; _open_lab())
-		choose_slot.add_theme_font_size_override("font_size",10)
-		choose_slot.set_meta("parent_slot",which)
-		choose_slot.set_meta("reproduction_action","select_parent_slot")
-		if active_parent_slot==which: choose_slot.add_theme_color_override("font_color",AMBER)
-		column.add_child(choose_slot)
+		column.add_child(_label("Parent 1" if which==0 else "Parent 2",12,MUTED))
 		var portrait := Cell.new()
 		portrait.plant = state.get_plant(parent_id)
 		portrait.zone = "parent"
 		portrait.index = which
-		portrait.custom_minimum_size = Vector2(100, 150 if small_layout else 190)
+		portrait.custom_minimum_size = Vector2(0,125 if small_layout else 190)
 		portrait.dropped.connect(func(id,_zone,slot_index):
 			if slot_index == 0: parent_a = id
 			else: parent_b = id
@@ -1305,10 +1441,12 @@ func _open_lab() -> void:
 		column.add_child(portrait)
 		var pick := OptionButton.new()
 		pick.clip_text = true
+		pick.fit_to_longest_item=false
+		pick.custom_minimum_size=Vector2(0,42)
 		pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		for id in mature:
 			var p: Dictionary = state.get_plant(str(id))
-			pick.add_item("%s · %s · G%d" % [p.name,p.type,p.generation])
+			pick.add_item("%s · G%d" % [p.name,p.generation])
 			pick.set_item_metadata(pick.item_count-1, id)
 			if id == parent_id: pick.select(pick.item_count-1)
 		column.add_child(pick)
@@ -1319,76 +1457,67 @@ func _open_lab() -> void:
 			if which == 0: parent_a = str(pick.get_item_metadata(i))
 			else: parent_b = str(pick.get_item_metadata(i))
 			_open_lab())
-		var specimen: Dictionary = state.get_plant(parent_id)
-		if not specimen.is_empty():
-			column.add_child(_wrap("G%d · %s" % [specimen.generation,_lineage_text(specimen)],11,AMBER))
-			column.add_child(_action_button("Traits & breeding",func(): _open_dna(parent_id),"view_dna",parent_id))
-		# A portrait is also a drag target for choosing a parent from the garden.
-	var specimen_scroll := ScrollContainer.new()
-	specimen_scroll.custom_minimum_size.y = 118
-	specimen_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	modal_content.add_child(_label("DRAG A SPECIMEN INTO A PARENT SLOT, OR USE THE SELECTORS",9,MUTED))
-	modal_content.add_child(specimen_scroll)
-	var candidates := HBoxContainer.new()
-	specimen_scroll.add_child(candidates)
-	for candidate_id in mature:
-		var candidate := Cell.new()
-		candidate.plant = state.get_plant(candidate_id)
-		candidate.zone = "candidate"
-		candidate.custom_minimum_size = Vector2(112,110)
-		candidate.chosen.connect(func(id,_zone,_index):
-			if active_parent_slot==0: parent_a = id
-			else: parent_b = id
-			active_parent_slot = 1-active_parent_slot
-			_open_lab())
-		candidates.add_child(candidate)
 	var a: Dictionary = state.get_plant(parent_a)
 	var b: Dictionary = state.get_plant(parent_b)
-	_line(modal_content)
 	match lab_mode:
 		"Crossbreed":
-			modal_content.add_child(_label("RECOMBINATION / POSSIBLE INHERITANCE", 11, AMBER))
-			modal_content.add_child(_wrap("%s × %s → generation %d\nColor, pattern, shape, size, and skills recombine independently. Each locus carries an expressed allele and a hidden allele.\nBoth lineages remain in the descendants and can recombine again." % [a.get("name","?"),b.get("name","?"),maxi(int(a.get("generation",1)),int(b.get("generation",1)))+1],14,INK))
-			modal_content.add_child(_wrap("Pollinate → fruit ripens in %d seconds → harvest → extract 2 seeds → sow → mature in %d seconds → cross again. Both parents are kept." % [State.FRUIT_GROW_SECONDS,State.GROW_SECONDS],13,Color("b8c9a3")))
-			modal_content.add_child(_wrap("Preview their offspring to compare colors, hidden traits, abilities, and the chance of getting the trait you want.",12,MUTED))
-			var preview: Button = _action_button("Preview offspring traits",func(): _open_dna_compare(parent_a,parent_b),"dna_compare",parent_a)
-			preview.disabled = a.is_empty() or b.is_empty() or parent_a==parent_b
-			modal_content.add_child(preview)
-			var pollinate: Button = _lab_action("Pollinate & grow fruit · %d light" % State.POLLINATION_COST,_crossbreed,"Harvested hybrid fruit gives 2 seeds and 30 light. Plant each seed for 10 light; the breeding cycle can sustain itself.")
-			pollinate.set_meta("reproduction_action","pollinate")
-			pollinate.set_meta("parent_a",parent_a)
-			pollinate.set_meta("parent_b",parent_b)
-			pollinate.disabled = a.is_empty() or b.is_empty() or parent_a==parent_b or int(state.resources.sunlight)<State.POLLINATION_COST or not state.fruit_status(parent_a).get("pollination",{}).is_empty()
-			if parent_a==parent_b: modal_content.add_child(_wrap("Choose two different plants. Every species and hybrid combination is allowed.",12,AMBER))
-			elif not state.fruit_status(parent_a).get("pollination",{}).is_empty():
+			modal_content.add_child(_wrap("Grow a fruit with two new seeds. Ready in 18 seconds.",16,INK))
+			var pending: bool=not state.fruit_status(parent_a).get("pollination",{}).is_empty()
+			if pending:
 				modal_content.add_child(_live_fruit_label(parent_a))
-				modal_content.add_child(_action_button("Open fruit & seeds",_open_seeds,"open_nursery"))
+				_lab_action("Open fruit & seeds",_open_seeds,"").set_meta("reproduction_action","open_nursery")
+			else:
+				var pollinate: Button = _lab_action("Cross these plants · 10 light",_crossbreed,"")
+				pollinate.set_meta("reproduction_action","pollinate")
+				pollinate.set_meta("parent_a",parent_a)
+				pollinate.set_meta("parent_b",parent_b)
+				pollinate.disabled = a.is_empty() or b.is_empty() or parent_a==parent_b or int(state.resources.sunlight)<State.POLLINATION_COST
+				if parent_a==parent_b: modal_content.add_child(_wrap("Choose two different plants.",13,AMBER))
 		"Graft":
 			var odds: int = roundi(state.graft_odds(parent_a,parent_b)*100)
-			modal_content.add_child(_label("A PRECISE, IMPERFECT JOIN", 11, AMBER))
-			modal_content.add_child(_wrap("%d%% success · %d%% rejection for this exact graft.\nAt most two grafts per host. The donor rests on a long cooldown; the host is unharmed on failure. Favorites cannot be used as donors.\nA seam and donor-colored tissue remain part of the organism." % [odds,100-odds], 14, INK))
+			modal_content.add_child(_wrap("%d%% success. One grafting material is spent either way. The host is unharmed on failure; the donor rests." % odds,14,INK))
 			action_picker = OptionButton.new()
 			for trait_name in ["feature","skill","stat"]: action_picker.add_item(trait_name.capitalize()); action_picker.set_item_metadata(action_picker.item_count-1, trait_name)
 			modal_content.add_child(action_picker)
-			var graft_button: Button = _lab_action("Attempt graft · 1 grafting material",_graft,"%d%% success / %d%% rejection · Host unharmed · Donor rests · Material spent either way" % [odds,100-odds])
+			var graft_button: Button = _lab_action("Attempt graft · 1 grafting material",_graft,"")
 			graft_button.set_meta("reproduction_action","graft")
 		"Mutate":
-			modal_content.add_child(_label("LET THE GENOME WANDER", 11, AMBER))
-			modal_content.add_child(_wrap("70% new trait · 20% no change · 10% visible deformity.\nRadiation: broad change; an 8% carnivorous reversion chance within the new-trait outcome (5.6% overall).\nChemical: rerolls the pattern slot. An agent is consumed in every outcome. Mutation is permanent and inheritable.", 14, INK))
+			modal_content.add_child(_wrap("70% new trait · 20% unchanged · 10% deformity. Changes are permanent and can be inherited.",14,INK))
 			action_picker = OptionButton.new()
 			action_picker.add_item("Radiation · broad mutation")
 			action_picker.add_item("Chemical · pattern-focused")
 			modal_content.add_child(action_picker)
-			_lab_action("Apply mutation · 1 agent",_mutate,"70% changed / 20% unchanged / 10% deformity · Radiation: 5.6% overall carnivorous reversion")
-	lab_result = _wrap("Every experiment writes a permanent entry in the lineage.", 12)
+			_lab_action("Apply mutation · 1 agent",_mutate,"Radiation: 5.6% overall carnivorous reversion")
+	var advanced:=VBoxContainer.new()
+	var toggle: Button=_button("More breeding options",func(): advanced.visible=not advanced.visible)
+	toggle.flat=true
+	toggle.alignment=HORIZONTAL_ALIGNMENT_LEFT
+	toggle.set_meta("garden_action","breeding_options")
+	modal_content.add_child(toggle)
+	modal_content.add_child(advanced)
+	advanced.visible=false
+	var preview: Button = _action_button("Preview offspring traits",func(): _open_dna_compare(parent_a,parent_b),"dna_compare",parent_a)
+	preview.disabled = a.is_empty() or b.is_empty() or parent_a==parent_b
+	advanced.add_child(preview)
+	for which in range(2):
+		var id: String=parent_a if which==0 else parent_b
+		advanced.add_child(_action_button("Traits & breeding",func(): _open_dna(id),"view_dna",id))
+	var tabs:=HBoxContainer.new()
+	advanced.add_child(tabs)
+	for mode in ["Crossbreed","Graft","Mutate"]:
+		var button: Button=_button(mode,func(): lab_mode=mode; _open_lab())
+		button.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+		tabs.add_child(button)
+	lab_result = _wrap("",12,AMBER)
 	modal_content.add_child(lab_result)
 
 func _lab_action(text: String, action: Callable, odds: String) -> Button:
 	var footer := VBoxContainer.new()
 	footer.add_theme_constant_override("separation",8)
 	modal.get_node("Panel").get_child(0).add_child(footer)
-	footer.add_child(_wrap(odds,11,AMBER))
+	if not odds.is_empty(): footer.add_child(_wrap(odds,11,AMBER))
 	var button: Button = _button(text,action,Vector2(0,48))
+	button.add_theme_stylebox_override("normal",_style(Color("ffd399"),Color("ba925b"),0,12,12))
 	footer.add_child(button)
 	return button
 
@@ -1397,16 +1526,20 @@ func _crossbreed() -> void:
 	if result.get("ok",false):
 		_play_sound("breed")
 		_refresh()
-		_open_modal("A new lineage is forming","pollination")
+		_open_modal("Your fruit is growing","pollination")
 		modal_content.add_child(_wrap("%s × %s" % [state.get_plant(parent_a).name,state.get_plant(parent_b).name],23,INK))
-		modal_content.add_child(_wrap(str(result.get("message","Pollination recorded.")),14,Color("b8c9a3")))
+		var art:=Portrait.new()
+		art.plant=state.get_plant(parent_a)
+		art.custom_minimum_size=Vector2(0,160 if small_layout else 240)
+		modal_content.add_child(art)
 		modal_content.add_child(_live_fruit_label(parent_a,18))
-		modal_content.add_child(_wrap("The mother carries the fruit. Its two seeds already contain independently recombined DNA from both parents. Harvest, extract the seeds, and plant them to meet the descendants.",14))
-		modal_content.add_child(_wrap("Parents stay alive. Every descendant can become a parent in the next cross.",14,AMBER))
-		modal_content.add_child(_harvest_button(parent_a))
-		modal_content.add_child(_action_button("Open fruit & seeds",func(): nursery_tab="plants"; _open_seeds(),"open_nursery"))
-		modal_content.add_child(_button("Plan another cross",_open_lab))
-		modal_content.add_child(_button("Return to my garden",_close_modal))
+		modal_content.add_child(_wrap("Two new seeds are inside. Harvest the fruit when it is ripe.",14))
+		var footer:=VBoxContainer.new()
+		modal.get_node("Panel").get_child(0).add_child(footer)
+		footer.add_child(_harvest_button(parent_a))
+		var inventory: Button=_action_button("Open fruit & seeds",func(): nursery_tab="plants"; _open_seeds(),"open_nursery")
+		inventory.flat=true
+		modal_content.add_child(inventory)
 	else: lab_result.text = str(result.get("message","Choose two different mature parents."))
 
 func _graft() -> void:
@@ -1477,7 +1610,6 @@ func _perform_nurture(id: String) -> void:
 	_refresh()
 
 func _open_seeds() -> void:
-	if exploring: _return_from_wilderness()
 	_open_modal("Fruit & seed nursery","seeds")
 	var planting: Button = _button("Plant a seed →",func(): planting_page=0; _open_planting())
 	planting.set_meta("planting_action","open")
@@ -1515,6 +1647,10 @@ func _open_seeds() -> void:
 		reproduction_buttons.append(extract)
 		footer.add_child(extract)
 	footer.add_child(_action_button("Choose parents for the next cross",func(): lab_mode="Crossbreed"; _open_lab(),"open_breeding"))
+	if exploring or adventuring:
+		var bag_back: Button=_button("Back to bag",func(): _open_field_bag(field_bag_target))
+		bag_back.set_meta("field_menu_action","back_to_bag")
+		footer.add_child(bag_back)
 
 func _nursery_card() -> VBoxContainer:
 	var panel := PanelContainer.new()
@@ -1657,6 +1793,8 @@ func _extract_all_fruit() -> void:
 	_open_seeds()
 
 func _plant_saved_seed(index: int) -> void:
+	if exploring: _return_from_wilderness()
+	if adventuring: _return_from_adventure()
 	var result: Dictionary = state.plant_seed(index)
 	if result.get("ok",false): _play_sound("seed"); _refresh(); _reveal(result.get("plant",{}),str(result.get("message","A seed opens.")))
 	else: _toast(str(result.get("message","Not enough gathered light.")))
@@ -1739,14 +1877,14 @@ func _collect_daily() -> void:
 func _open_guide() -> void:
 	_open_modal("Your little garden adventure","guide")
 	for entry: Array in [
-		["Grow your next adventure","Visit the stream, meet four unusual plants, and cross their real inherited traits. Grow a floating leaf raft or a climbing vine bridge, then meet Moonbell and discover a glowing third generation."],
+		["Grow your next adventure","Explore the living valley. Watch plants shelter seedlings, grip supports, and attract moths. Cross useful traits and return with an offspring that can change a familiar place."],
 		["Plant a little wonder","Tap an empty plot, choose a seed, and press Plant here. It costs 10 light and grows automatically in 12 seconds. Your new plant gets its own look, height, weight, and family story."],
 		["Meet the fair visitors","Mira, Jun, and Pip bring three friendly requests each day. Pick a matching grown plant and show it to earn gifts. You keep the plant! Collect permanent ribbons for your growing milestones."],
 		["Make a new plant family","Choose two grown plants in Crossbreeding. Pollinate for 10 light, wait for their fruit, harvest it, take out the seeds, then plant them. Mix their children again for more surprises. Traits & breeding shows what can be inherited."],
 		["Head out on a plant safari","Explore the wilds to find new colors, shapes, and plant families. Study a wild plant, take a cutting, and bring your new friend home. Your growing collection unlocks ribbons and new breeding ideas."],
 		["A little care goes a long way","Water for a little extra life, add stretch feed for height, or try chunky compost for a fuller plant. Pin favorites, say hello, and find out which plant becomes your garden giant."],
 		["Share your harvest","Show off six plants on the display shelf for beauty gifts. Trade spare plants, fruit, or seeds at the market, then buy supplies for your next adventure. Harvest fruit to keep planting and caring."],
-		["Keep the family growing","Plants have a life cycle. Life tonic gives favorites more time; seeds carry their family story into a new generation. Plants rest while the game is closed or in the background."]
+		["Keep the family growing","Plants age only when you rest until morning. See which plants will age or wither before you choose. Their final fruit and family records keep each lineage growing."]
 	]:
 		modal_content.add_child(_wrap(str(entry[0]),19,AMBER))
 		modal_content.add_child(_wrap(str(entry[1]),14,INK))
@@ -1773,10 +1911,9 @@ func _process(delta: float) -> void:
 		var active_seconds: float = save_timer
 		save_timer = 0
 		var grew: bool = state.tick_growth()
-		# A plant's active-play clock rests when the game is in the background.
-		# Fruit and seedling timers still use wall time, as before.
-		var playing: bool = DisplayServer.get_name()=="headless" or get_window().has_focus()
-		var life_changed: bool = state.advance_lifecycle(active_seconds if playing else 0.0)
+		# Aging happens only when the player deliberately starts a new morning.
+		# Real fruit and seedlings can still finish while exploring or reading.
+		var life_changed: bool = false
 		var fruit_changed: bool = state.tick_reproduction()
 		life_save_timer += active_seconds
 		if life_changed or life_save_timer>=10.0:
@@ -1801,6 +1938,7 @@ func _open_adventure() -> void:
 		adventure_field=load("res://scripts/adventure_field.gd").new()
 		adventure_field.state=state
 		adventure_field.action_requested.connect(_adventure_action)
+		adventure_field.terrain_step.connect(func(kind: String): _play_sound(kind))
 		adventure_field.returned_home.connect(_return_from_adventure)
 		add_child(adventure_field)
 		adventure_field.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1837,13 +1975,7 @@ func _adventure_action(action: String,key: String="") -> void:
 	match action:
 		"inspect_parent","moonbell": _show_adventure_parent(key if not key.is_empty() else "moonbell")
 		"cross":
-			var info: Dictionary=state.adventure_info()
-			var siblings: Array=info.get("siblings",[])
-			var generation: int=0
-			for id: String in siblings: generation=maxi(generation,int(state.get_plant(id).get("generation",0)))
-			if key!="bench" and not siblings.is_empty() and (str(info.stage)=="shore" or (str(info.stage)=="lantern" and generation>=3)):
-				_show_adventure_reveal(siblings)
-			else: _show_adventure_cross()
+			_show_adventure_cross()
 		"crossing":
 			if not str(state.adventure_info().get("route","")).is_empty(): _adventure_test_route("stream")
 			else: _show_adventure_use("stream")
@@ -1851,6 +1983,16 @@ func _adventure_action(action: String,key: String="") -> void:
 			if str(state.adventure_info().get("stage",""))=="restored": _adventure_test_route("lantern")
 			else: _show_adventure_use("lantern")
 		"journal": AdventureUI.journal(self)
+		"discovery": _show_adventure_discovery(key)
+		"quick_discovery": _adventure_quick_discovery(key)
+		"quick_crossing": _adventure_quick_crossing(key)
+		"experiments": _show_adventure_experiments(key)
+		"rest": _show_garden_day()
+		"party": _show_party()
+		"dex": _open_field_dex()
+		"bag": _open_field_bag()
+		"wilds": _open_field_routes()
+		"stream": _open_adventure()
 		"garden","home": _return_from_adventure()
 
 func _show_adventure_parent(key: String) -> void:
@@ -1865,14 +2007,132 @@ func _show_adventure_use(goal: String="stream",id: String="") -> void:
 func _show_adventure_reveal(ids: Array) -> void:
 	AdventureUI.reveal(self,ids)
 
+func _show_adventure_discovery(site_id: String,plant_id: String="",approach: String="") -> void:
+	AdventureUI.discovery(self,site_id,plant_id,approach)
+
+func _adventure_try_discovery(site_id: String,plant_id: String,approach: String) -> void:
+	var result: Dictionary=state.adventure_discover(site_id,plant_id,approach)
+	if not bool(result.get("ok",false)):
+		_toast(str(result.get("message","")))
+		_show_adventure_discovery(site_id,plant_id,approach)
+		return
+	_play_sound("bloom" if bool(result.get("success",false)) else "observe")
+	_refresh()
+	if is_instance_valid(adventure_field): adventure_field.refresh()
+	AdventureUI.discovery_success(self,result)
+
+func _adventure_quick_discovery(site_id: String) -> void:
+	var party: Array=state.travel_party()
+	if party.is_empty(): _show_adventure_discovery(site_id); return
+	var result: Dictionary=state.adventure_discover(site_id,str(party[0].id))
+	if not bool(result.get("success",false)):
+		_show_adventure_discovery(site_id,str(party[0].id))
+		return
+	_play_sound("bloom")
+	_refresh()
+	if is_instance_valid(adventure_field):
+		adventure_field.refresh()
+		adventure_field.celebrate_site(site_id)
+	var reward: Dictionary=result.get("enhancement_reward_seed",{})
+	if reward.is_empty(): reward=result.get("reward_seed",{})
+	var message: String=str(result.message)
+	if not reward.is_empty(): message+="\n"+"Discovered: %s" % str(reward.name)
+	_toast(message)
+
+func _adventure_quick_crossing(goal: String) -> void:
+	var party: Array=state.travel_party()
+	if party.is_empty(): _show_adventure_use(goal); return
+	var result: Dictionary=state.adventure_use(str(party[0].id),goal)
+	if not bool(result.get("ok",false)): _show_adventure_use(goal); return
+	_play_sound("bloom")
+	_refresh()
+	if is_instance_valid(adventure_field):
+		adventure_field.refresh()
+		adventure_field.celebrate_site("crossing" if goal=="stream" else "gate")
+	_toast(str(result.message))
+
+func _show_adventure_experiments(plant_id: String="") -> void:
+	AdventureUI.experiments(self,plant_id)
+
+func _adventure_visit(site_id: String) -> void:
+	_open_adventure()
+	if not is_instance_valid(adventure_field): return
+	var destination: Vector2=adventure_field.discovery_position(site_id)
+	adventure_field.walk_to(destination+Vector2(0,35))
+
+func _adventure_try_outside(plant_id: String) -> void:
+	var result: Dictionary=state.set_lead_plant(plant_id)
+	if not bool(result.get("ok",false)):
+		_toast(str(result.get("message","")))
+		return
+	_open_adventure()
+	# A suggestion is optional: the whole valley remains available to explore.
+	for site: Dictionary in state.adventure_sites():
+		var key: String=str(site.get("key",site.get("id","")))
+		var preview: Dictionary=state.adventure_discovery_preview(key,plant_id)
+		if bool(site.get("solved",false)) and (bool(site.get("enhanced",false)) or not bool(preview.get("combined",false))): continue
+		if bool(preview.get("eligible",false)) and adventure_field.has_method("discovery_position"):
+			adventure_field.walk_to(adventure_field.discovery_position(key))
+			break
+	_toast("Your plant is coming along. Look for somewhere to try its traits.")
+
+func _adventure_observe(key: String,choice: String="watch") -> void:
+	var result: Dictionary=state.adventure_observe(key,choice)
+	_play_sound("observe")
+	_toast(str(result.get("message","")))
+	_show_adventure_parent(key)
+	if is_instance_valid(modal):
+		modal_content.add_child(_wrap(str(result.get("message","")),16,AMBER))
+		_localize_ui()
+
+func _show_garden_day() -> void:
+	var previous: String=modal_kind
+	var a: String=str(modal.get_meta("mother_id","")) if is_instance_valid(modal) else ""
+	var b: String=str(modal.get_meta("father_id","")) if is_instance_valid(modal) else ""
+	var site_id: String=str(modal.get_meta("site_id","")) if is_instance_valid(modal) else ""
+	var plant_id: String=str(modal.get_meta("plant_id","")) if is_instance_valid(modal) else ""
+	var weather: String=str(modal.get_meta("weather_mode","rain")) if is_instance_valid(modal) else "rain"
+	var siblings: Array=state.adventure_info().get("siblings",[]).duplicate()
+	var preview: Dictionary=state.garden_day_preview()
+	_open_modal("A new morning","garden_day")
+	modal_content.add_child(_wrap("Day %d → Day %d" % [state.garden_day,int(preview.next_day)],26,INK))
+	modal_content.add_child(_wrap("Wake up to grown seedlings and ripe fruit. Plants age only when you choose a new morning.",16,INK))
+	modal_content.add_child(_wrap("%d seedlings will unfurl · %d hybrid fruit will ripen" % [int(preview.seedlings),int(preview.hybrid_fruit)],15,AMBER))
+	modal_content.add_child(_wrap("Ordinary plants live for 5 garden days. Their seeds and family records stay with you.",13,MUTED))
+	for id: String in preview.aging:
+		modal_content.add_child(_wrap("%s will begin aging." % state.get_plant(id).name,14,AMBER))
+	for id: String in preview.retiring:
+		modal_content.add_child(_wrap("%s will wither and leave a final seed-bearing fruit." % state.get_plant(id).name,14,AMBER))
+	var wake: Button=_button("Rest until morning · free",func():
+		state.advance_garden_day()
+		_play_sound("bloom")
+		_close_modal()
+		_refresh()
+		if is_instance_valid(adventure_field): adventure_field.refresh()
+		if previous=="adventure_cross": _show_adventure_cross(a,b)
+		elif previous=="adventure_reveal" and not siblings.is_empty(): _show_adventure_reveal(siblings)
+		elif previous=="field_bag": _open_field_bag()
+		elif previous=="adventure_discovery": _show_adventure_discovery(site_id,plant_id)
+		elif previous=="adventure_experiments": AdventureUI.experiments(self,plant_id,weather)
+		_toast("Morning in the valley · Day %d" % state.garden_day))
+	wake.set_meta("garden_day_action","advance")
+	var day_buttons: VBoxContainer=AdventureUI.footer(self)
+	day_buttons.add_child(wake)
+	day_buttons.add_child(_button("Keep exploring today",func():
+		_close_modal()
+		if previous=="adventure_cross": _show_adventure_cross(a,b)
+		elif previous=="adventure_reveal" and not siblings.is_empty(): _show_adventure_reveal(siblings)))
+
 func _adventure_collect(key: String) -> void:
 	var result: Dictionary=state.adventure_collect(key)
 	_toast(str(result.get("message","")))
 	if result.get("ok",false):
 		_play_sound("collect_success")
+		state.set_lead_plant(str(result.plant_id))
 		_refresh()
 		if is_instance_valid(adventure_field): adventure_field.refresh()
-	_show_adventure_parent(key)
+		_adventure_back_to_field()
+	else: _show_adventure_parent(key)
 
 func _adventure_suggest_pair(first: String,second: String) -> void:
 	var cuttings: Dictionary=state.adventure_info().get("cuttings",{})
@@ -1934,6 +2194,7 @@ func _open_wilderness() -> void:
 		wilderness.supplies_requested.connect(_open_field_supplies)
 		wilderness.display_requested.connect(_open_settings)
 		wilderness.sfx_requested.connect(_play_sound)
+		wilderness.menu_requested.connect(func(action: String): _adventure_action(action))
 		wilderness.position_changed.connect(_field_audio_position)
 		add_child(wilderness)
 		wilderness.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -2135,6 +2396,10 @@ func _show_wild_capture(p: Dictionary, message: String) -> void:
 	var footer := VBoxContainer.new()
 	modal.get_node("Panel").get_child(0).add_child(footer)
 	footer.add_child(_button("Keep exploring →",_continue_exploring,Vector2(0,46)))
+	var companion: Button=_button("Travel with this plant",func(): _set_party_lead(str(p.id)))
+	companion.set_meta("party_action","lead")
+	companion.set_meta("plant_id",str(p.id))
+	footer.add_child(companion)
 	footer.add_child(_button("Return to garden",_return_from_wilderness))
 	footer.add_child(_button("Read its genome",func(): _open_detail(str(p.id))))
 	wilderness.refresh()

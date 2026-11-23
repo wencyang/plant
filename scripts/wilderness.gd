@@ -8,6 +8,7 @@ signal supplies_requested()
 signal display_requested()
 signal position_changed()
 signal sfx_requested(event: String)
+signal menu_requested(action: String)
 
 const MAP_WIDTH: int = 160
 const MAP_HEIGHT: int = 128
@@ -18,6 +19,7 @@ const BotanicalArt = preload("res://scripts/plant_portrait.gd")
 const LandscapeArt = preload("res://scripts/landscape_art.gd")
 const HabitatScene = preload("res://scripts/habitat_scene.gd")
 const Habitat = preload("res://scripts/habitat_catalog.gd")
+const Locale = preload("res://scripts/localization.gd")
 const LANDSCAPE_PATHS: Dictionary = {"Mosswood":"forest","Amber Hollow":"amber","Sporefen":"sporefen","Sunken Glade":"glasshouse","Glassfall Coast":"coast","Ember Ridge":"canyon","Moonfen":"moonfen","Ancient Grove":"ancient"}
 const TILE: int = 16
 const DETAIL: int = 6
@@ -285,7 +287,11 @@ var _wild_previews: Dictionary = {}
 var _wild_preview_generation: String = ""
 var _wild_layer: Control
 var _wild_portraits: Dictionary = {}
+var _companion: Control
+var _companion_tile:=Vector2i(15,19)
+var _field_menu: HBoxContainer
 var map_build_msec: float = 0.0
+var _rendered_language: String = ""
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -301,6 +307,7 @@ func _ready() -> void:
 		player_tile = Vector2i(clampi(int(saved[0]),1,MAP_WIDTH-2),clampi(int(saved[1]),1,MAP_HEIGHT-2))
 	_build_map()
 	if not is_walkable(player_tile): player_tile = Vector2i(15,18)
+	_companion_tile=player_tile+Vector2i(1,0) if is_walkable(player_tile+Vector2i(1,0)) else player_tile
 	_build_ui()
 	_wild_layer=Control.new()
 	_wild_layer.name="Living field specimens"
@@ -329,18 +336,40 @@ func _style(background: Color, border: Color, padding: int = 12) -> StyleBoxFlat
 	s.content_margin_bottom = padding
 	return s
 
+func _localized_text(control: Control, source: String) -> void:
+	# Each movement update starts from canonical text and renders immediately.
+	# Remember both values so the garden's later locale sweep cannot mistake a
+	# translated display value for a new English source during language changes.
+	var rendered: String=Locale.text(source)
+	control.set_meta("_locale_source_text",source)
+	control.set_meta("_locale_rendered_text",rendered)
+	control.set("text",rendered)
+	Locale.apply_tree(control)
+
+func _localized_tooltip(control: Control, source: String) -> void:
+	var rendered: String=Locale.text(source)
+	control.set_meta("_locale_source_tooltip_text",source)
+	control.set_meta("_locale_rendered_tooltip_text",rendered)
+	control.tooltip_text=rendered
+	Locale.apply_tree(control)
+
+func _sync_language() -> void:
+	var language: String=Locale.get_language()
+	if _rendered_language==language: return
+	_rendered_language=language
+	Locale.apply_tree(self)
+
 func _label(text: String, font_size: int, color: Color) -> Label:
 	var l := Label.new()
-	l.text = text
 	l.add_theme_font_override("font",_font)
 	l.add_theme_font_size_override("font_size",font_size)
 	l.add_theme_color_override("font_color",Color("284838") if (color.r+color.g+color.b)>1.7 else color)
+	_localized_text(l,text)
 	return l
 
 func _button(text: String, action: Callable) -> Button:
 	var b := Button.new()
 	b.focus_mode = Control.FOCUS_NONE
-	b.text = text
 	b.add_theme_font_override("font",_font)
 	b.add_theme_font_size_override("font_size",14)
 	b.add_theme_color_override("font_color",Color("284838"))
@@ -352,6 +381,7 @@ func _button(text: String, action: Callable) -> Button:
 	b.add_theme_stylebox_override("pressed",_style(Color("e8bd75"),Color("b38c4c"),8))
 	b.add_theme_stylebox_override("focus",_style(Color(0,0,0,0),Color("cf8f4b"),8))
 	b.pressed.connect(func(): sfx_requested.emit("ui"); action.call())
+	_localized_text(b,text)
 	return b
 
 func _build_ui() -> void:
@@ -426,6 +456,17 @@ func _build_ui() -> void:
 	action_column.add_child(_hint_label)
 	_legend_label = _label("WASD / arrows to stroll · E to meet a plant · M for map · Tap to walk",12,Color("8eaa94"))
 	column.add_child(_legend_label)
+	_field_menu=HBoxContainer.new()
+	_field_menu.add_theme_constant_override("separation",6)
+	column.add_child(_field_menu)
+	for entry: Array in [["Party","party"],["Guide","dex"],["Bag","bag"],["Stream","stream"]]:
+		var key: String=str(entry[1])
+		var button: Button=_button(str(entry[0]),func(): menu_requested.emit(key))
+		button.set_meta("field_action",key)
+		button.custom_minimum_size=Vector2(0,34)
+		button.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+		button.clip_text=true
+		_field_menu.add_child(button)
 
 func _build_vista() -> void:
 	_vista=TextureRect.new()
@@ -470,20 +511,22 @@ func _update_vista() -> void:
 	_vista.texture=landscape_texture(biome)
 	_vista.set_meta("habitat_key",biome)
 	_vista.set_meta("art_source",str(LANDSCAPE_PATHS.get(biome,"forest")))
-	_vista_title.text=biome
+	_localized_text(_vista_title,biome)
 	var region: Dictionary=Habitat.region(biome)
-	_vista_note.text=str(region.get("landscape",""))
+	_localized_text(_vista_note,str(region.get("landscape","")))
 	_vista.visible=_vista.texture!=null
 
 func _layout() -> void:
+	_sync_language()
 	var compact: bool = size.x < 700
 	_pixel_scale = 2.0 if compact else clampf(size.x/640.0,2.5,3.5)
 	_fit_panels()
-	_header_title.text = "PLANT SAFARI" if compact else "PLANT SAFARI / THE OUTER GARDENS"
+	_localized_text(_header_title,"PLANT SAFARI" if compact else "PLANT SAFARI / THE OUTER GARDENS")
 	_header_title.add_theme_font_size_override("font_size",13 if compact else 16)
 	_location_label.add_theme_font_size_override("font_size",12 if compact else 14)
 	_resources_label.add_theme_font_size_override("font_size",12 if compact else 13)
 	_legend_label.visible = not compact
+	_dpad.visible=compact
 	_update_camera()
 	_layout_atlas()
 	queue_redraw()
@@ -496,6 +539,7 @@ func _fit_panels() -> void:
 	_header.position = Vector2(margin,margin)
 	_header.size = Vector2(maxf(1,size.x-margin*2),86 if compact else 88)
 	_footer.size = Vector2(maxf(1,size.x-margin*2),164 if compact else 152)
+	_footer.size.y=maxf(_footer.size.y,_footer.get_combined_minimum_size().y)
 	_footer.position = Vector2(margin,size.y-_footer.size.y-margin)
 	var field_width: float = minf(size.x-margin*2,MAP_WIDTH*TILE*_pixel_scale)
 	var field_top: float=_header.position.y+_header.size.y+8
@@ -514,35 +558,37 @@ func _fit_panels() -> void:
 
 func refresh() -> void:
 	if not is_instance_valid(_resources_label): return
+	_sync_language()
 	var collected: int = 0
 	if state != null:
 		collected = state.expedition.get("collected_sites",[]).size()
-		_resources_label.text = "%d KITS / %d FOUND" % [int(state.field_kits),collected]
+		_localized_text(_resources_label,"%d KITS / %d FOUND" % [int(state.field_kits),collected])
 	var biome: String = biome_at(player_tile)
-	_location_label.text = biome.to_upper()+" / ROUTE "+"%02d" % (["Mosswood","Amber Hollow","Sporefen","Sunken Glade","Glassfall Coast","Ember Ridge","Moonfen","Ancient Grove"].find(biome)+1)
+	_localized_text(_location_label,biome.to_upper()+" / ROUTE "+"%02d" % (["Mosswood","Amber Hollow","Sporefen","Sunken Glade","Glassfall Coast","Ember Ridge","Moonfen","Ancient Grove"].find(biome)+1))
 	_update_vista()
 	var site: Dictionary = nearest_site()
 	var patch: Dictionary=Habitat.patch(str(site.biome),str(site.id)) if not site.is_empty() else {}
 	var distance: int = _distance(player_tile,Vector2i(site.x,site.y)) if not site.is_empty() else 0
 	if not site.is_empty() and distance <= 2:
-		_target_label.text = "%s / %s" % [str(patch.get("name","Wild growth")),str(patch.get("primary_species",""))]
-		_action_button.text = "Investigate [E]"
-		_hint_label.text = str(patch.get("clue","A new plant pal! Bring a field kit and say hello."))
+		_localized_text(_target_label,"%s / %s" % [str(patch.get("name","Wild growth")),str(patch.get("primary_species",""))])
+		_localized_text(_action_button,"Investigate [E]")
+		_localized_text(_hint_label,str(patch.get("clue","A new plant pal! Bring a field kit and say hello.")))
 	elif _distance(player_tile,HOME) <= 2:
-		_target_label.text = "YOUR CONSERVATORY / HOME"
-		_action_button.text = "Return home [E]"
-		_hint_label.text = "Home sweet greenhouse. Bring your wild finds home and see what grows!"
+		_localized_text(_target_label,"YOUR CONSERVATORY / HOME")
+		_localized_text(_action_button,"Return home [E]")
+		_localized_text(_hint_label,"Home sweet greenhouse. Bring your wild finds home and see what grows!")
 	else:
 		var camp: Dictionary = _nearby_landmark()
-		_target_label.text = str(camp.name).to_upper()+" / FIELD CAMP" if not camp.is_empty() else "%s / %d steps to wild growth" % [biome.to_upper(),distance]
-		_action_button.text = "Rest at camp [E]" if not camp.is_empty() else "Look around [E]"
-		_hint_label.text = str(patch.get("clue","Eight habitats, so many plant pals! Open the map to pick your next adventure."))
+		_localized_text(_target_label,str(camp.name).to_upper()+" / FIELD CAMP" if not camp.is_empty() else "%s / %d steps to wild growth" % [biome.to_upper(),distance])
+		_localized_text(_action_button,"Rest at camp [E]" if not camp.is_empty() else "Look around [E]")
+		_localized_text(_hint_label,str(patch.get("clue","Eight habitats, so many plant pals! Open the map to pick your next adventure.")))
 	_action_button.disabled = waiting
 	if is_instance_valid(_atlas_canvas): _atlas_canvas.queue_redraw()
 	queue_redraw()
 
 func _process(delta: float) -> void:
 	if not is_visible_in_tree(): return
+	_sync_language()
 	_time += delta
 	_step_cooldown = maxf(0,_step_cooldown-delta)
 	if not waiting and _step_cooldown <= 0:
@@ -605,6 +651,7 @@ func _try_step(direction: Vector2i) -> bool:
 	_step_cooldown = STEP_TIME
 	var target: Vector2i = player_tile+direction
 	if not is_walkable(target): return false
+	_companion_tile=player_tile
 	player_tile = target
 	_walk_phase = 1-_walk_phase
 	if state != null: state.move_explorer(player_tile.x,player_tile.y)
@@ -942,6 +989,26 @@ func _update_camera() -> void:
 	var desired: Vector2 = Vector2(player_tile*TILE)+Vector2(8,8)-visible*0.5
 	_camera = Vector2(floorf(clampf(desired.x,0,maxf(0,MAP_WIDTH*TILE-visible.x))),floorf(clampf(desired.y,0,maxf(0,MAP_HEIGHT*TILE-visible.y))))
 	_sync_wild_portraits()
+	_sync_companion()
+
+func _sync_companion() -> void:
+	if state==null or not state.has_method("travel_party") or not is_instance_valid(_wild_layer): return
+	var party: Array=state.travel_party()
+	if party.is_empty():
+		if is_instance_valid(_companion): _companion.visible=false
+		return
+	var lead: Dictionary=party[0]
+	if not is_instance_valid(_companion):
+		_companion=BotanicalArt.new()
+		_companion.set_meta("wild_companion",true)
+		_companion.mouse_filter=Control.MOUSE_FILTER_IGNORE
+		_wild_layer.add_child(_companion)
+	_companion.visible=true
+	_companion.plant=lead
+	_companion.set_meta("plant_id",str(lead.id))
+	var point: Vector2=Vector2(_companion_tile*TILE)+Vector2(8,13)-_camera
+	_companion.position=(point+Vector2(-10,-25))*_pixel_scale
+	_companion.size=Vector2(20,26)*_pixel_scale
 
 func _sync_wild_portraits() -> void:
 	if state==null or not is_instance_valid(_wild_layer) or _map_rect.size.x<1: return
@@ -1433,7 +1500,7 @@ func _rebuild_camp_list() -> void:
 		notes.add_child(residents)
 		var b := _button("Travel to %s" % str(camp.name) if known else "%s / Unvisited camp" % str(camp.name),func(): _travel_to(camp))
 		b.clip_text=true
-		b.tooltip_text=str(region.get("landscape",""))
+		_localized_tooltip(b,str(region.get("landscape","")))
 		b.disabled = not known
 		notes.add_child(b)
 

@@ -127,7 +127,7 @@ func run() -> void:
 	game.language_picker.item_selected.emit(1)
 	await settle()
 	check(Locale.get_language()=="zh_CN","The real language picker enables Simplified Chinese")
-	check(game.heading.text==Locale.text("Quiet Conservatory") and game.heading.text!="Quiet Conservatory","The existing garden heading updates to Chinese in place")
+	check(game.heading.text==Locale.text("My garden") and game.heading.text!="My garden","The existing garden heading updates to Chinese in place")
 	check_modal("Chinese desktop settings")
 	check_canonical("Chinese rendering")
 	var language_path: String = save_path.get_basename()+".language.cfg"
@@ -136,7 +136,7 @@ func run() -> void:
 	game.language_picker.select(0)
 	game.language_picker.item_selected.emit(0)
 	await settle()
-	check(Locale.get_language()=="en" and game.heading.text=="Quiet Conservatory","The real language picker restores English without rebuilding the garden")
+	check(Locale.get_language()=="en" and game.heading.text=="My garden","The real language picker restores English without rebuilding the garden")
 	check_canonical("English round trip")
 	game._close_modal()
 	game._open_detail(str(canonical_ids[0]))

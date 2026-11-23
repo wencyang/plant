@@ -65,6 +65,7 @@ func refresh() -> void:
 		meta_label.text = "%s · G%d" % [plant.get("type", "Leaf"), generation]
 		if zone in ["bed","tray"]:
 			meta_label.text = "%.0f cm · %.0f g" % [float(measure.get("height_cm",0)),float(measure.get("weight_g",0))]
+		if zone=="bed": meta_label.text="%.0f cm" % float(measure.get("height_cm",0))
 		if not plant.get("mature",true):
 			_update_growth_label()
 		elif meta_label.has_meta("plant_growth_label"): meta_label.remove_meta("plant_growth_label")

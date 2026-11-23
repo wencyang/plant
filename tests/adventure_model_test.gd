@@ -76,7 +76,7 @@ func run() -> void:
 		check(not state.market_sell("plant",str(row.id)).ok and fingerprint(state)==unchanged,"Direct sale cannot bypass the field cutting guard")
 		check(not state.adventure_collect(str(row.key)).ok and fingerprint(state)==unchanged,"Repeated collection cannot duplicate a living original")
 	check(state.life_profile(str(ids.river_fan)).life_limit==3600,"Healthy field cuttings have a valid60-minute active lifespan reserve")
-	check(not state.adventure_preview(str(ids.river_fan)).eligible,"A pure founding parent cannot replace the breeding discovery")
+	check(state.adventure_preview(str(ids.river_fan)).eligible,"Expressed sheltering traits work in founders as well as descendants")
 	# The exact two fertilized embryos are used, even with a very large seed box
 	# and a full bed. No earlier packet or existing garden placement is touched.
 	var packet: Dictionary=state.seed_bank[0].duplicate(true)
@@ -118,7 +118,7 @@ func run() -> void:
 	var moon: Dictionary=state.adventure_collect("moonbell")
 	check(moon.ok and state.adventure_info().stage=="lantern","The island flower becomes a real new breeding parent")
 	check(moon.plant.genes.glow=={"dominant":"Soft Glow","recessive":"Soft Glow"},"Moonbell has real canonical SoftGlow DNA in both copies")
-	check(not state.adventure_preview(str(moon.plant_id),"lantern").eligible,"A glowing founding plant does not bypass the next-generation goal")
+	check(state.adventure_preview(str(moon.plant_id),"lantern").eligible,"Actual glow works in any generation without an arbitrary generation key")
 	var glowing_id: String=""
 	var g3: Dictionary={}
 	for attempt in range(12):
@@ -229,7 +229,9 @@ func run() -> void:
 	check(Rules.capabilities(ordinary).raft,"Later mixed lineages retain a functional20-percent ancestry contribution")
 	ordinary.lineage_mix.Spore=0.19
 	ordinary.lineage_mix.Bloom=0.61
-	check(not Rules.capabilities(ordinary).raft,"A diluted missing organ contribution does not fabricate a floating ability")
+	check(Rules.capabilities(ordinary).raft,"Expressed broad waxy leaves remain useful regardless of family percentages")
+	ordinary.genes.shape.dominant="Pointed"
+	check(not Rules.capabilities(ordinary).raft,"A narrow leaf cannot claim a canopy through its ancestry alone")
 	for malformed: Variant in [null,[],{},true,{"version":1,"cuttings":[]}, {"version":1,"cuttings":{},"route":"raft"}]:
 		check(not Rules.valid_adventure(malformed,state.plants),"Malformed adventure ledgers fail without changing the garden")
 	var cared=fresh("care_reserve")

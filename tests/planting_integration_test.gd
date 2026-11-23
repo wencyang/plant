@@ -192,8 +192,11 @@ func check_actual_sowing(reference: Variant,target: int,seed: Dictionary) -> voi
 		var cell: Control = game.bed_grid.get_child(target)
 		check(str(cell.plant.get("id",""))==id and bool(cell.selected),"The actual chosen soil cell highlights the new seedling")
 		check(cell.meta_label.text.contains("Growing") and bool(cell.meta_label.get_meta("plant_growth_label",false)),"The garden cell shows its own growing countdown")
+		cell.chosen.emit(id,"bed",target)
+		await settle()
+		check(game.modal_kind=="specimen","Tapping the planted seedling opens its simple plant card")
 		var care: Button = find_care_entry(game,id)
-		check(care!=null,"The selected seedling exposes its own actual care entry")
+		check(care!=null and care.is_visible_in_tree(),"The selected seedling exposes its own actual care entry")
 		if care!=null:
 			care.pressed.emit()
 			await settle()

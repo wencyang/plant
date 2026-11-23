@@ -9,8 +9,8 @@ const GROW_SECONDS: int = 12
 const BASE_HEIGHT := {"Leaf":38.0,"Bloom":52.0,"Vine":92.0,"Root":24.0,"Spore":32.0,"Toxin":45.0,"Parasite":67.0,"Carnivorous":36.0}
 const BASE_WEIGHT := {"Leaf":230.0,"Bloom":160.0,"Vine":115.0,"Root":480.0,"Spore":180.0,"Toxin":260.0,"Parasite":95.0,"Carnivorous":250.0}
 const TOOLS := [
-	{"key":"water","name":"Watering can","description":"Refresh the roots and add 1 minute to this plant's life. Free, with a 60-second cooldown; up to 5 waterings.","cost":0,"icon":"drop","max_uses":5,"cooldown":60,"effect":"Life +1 minute"},
-	{"key":"longevity","name":"Longevity tonic","description":"Add 10 minutes to this plant's lifespan. Up to 3 doses; cannot restore a withered plant.","cost":10,"icon":"tonic","max_uses":3,"cooldown":0,"effect":"Life +10 minutes"},
+	{"key":"water","name":"Watering can","description":"Refresh the roots and add a fifth of a garden day to this plant's life. Free; refills after 60 seconds or a new morning. Up to 5 waterings.","cost":0,"icon":"drop","max_uses":5,"cooldown":60,"effect":"Life +0.2 garden days"},
+	{"key":"longevity","name":"Longevity tonic","description":"Add 2 garden days to this plant's lifespan. Up to 3 doses; cannot restore a withered plant.","cost":10,"icon":"tonic","max_uses":3,"cooldown":0,"effect":"Life +2 garden days"},
 	{"key":"growth","name":"Growth fertilizer","description":"Increase this plant's mature height by 15% of its natural height. Up to 4 doses.","cost":12,"icon":"sprout","max_uses":4,"cooldown":0,"effect":"Height +15%"},
 	{"key":"compost","name":"Rich compost","description":"Increase this plant's mature weight by 20% of its natural weight. Up to 4 portions.","cost":12,"icon":"soil","max_uses":4,"cooldown":0,"effect":"Weight +20%"},
 	{"key":"sunlamp","name":"Sun lamp","description":"Help one growing seedling reach maturity immediately. Its own DNA and mature measurements stay intact.","cost":5,"icon":"sun","max_uses":1,"cooldown":0,"effect":"Mature a seedling now"},
