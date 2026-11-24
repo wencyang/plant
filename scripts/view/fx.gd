@@ -7,6 +7,7 @@ var streams: Array = []
 var rings: Array = []
 var trail: Array = []       # Vector2 points of an active swipe
 var trail_fade: Array = []  # [points, life]
+var labels: Array = []
 
 func _process(delta: float) -> void:
 	for p in particles:
@@ -26,6 +27,10 @@ func _process(delta: float) -> void:
 	streams = streams.filter(func(s): return s.t < s.dur)
 	for r in rings: r.life -= delta
 	rings = rings.filter(func(r): return r.life > 0.0)
+	for lb in labels:
+		lb.life -= delta
+		lb.pos.y -= 14.0 * delta
+	labels = labels.filter(func(lb): return lb.life > 0.0)
 	for tf in trail_fade: tf[1] -= delta
 	trail_fade = trail_fade.filter(func(tf): return tf[1] > 0.0)
 	queue_redraw()
@@ -44,6 +49,11 @@ func add_debris(segments: Array, color: Color) -> void:
 	if segments.is_empty(): return
 	var pivot: Vector2 = segments[0][0]
 	debris.append({"segs": segments, "pivot": pivot, "off": Vector2.ZERO, "vel": Vector2(randf_range(-40, 40), -60), "rot": 0.0, "spin": randf_range(-1.2, 1.2), "life": 1.6, "color": color})
+
+func label(pos: Vector2, text: String, color: Color, life := 3.0) -> void:
+	for lb in labels:
+		if lb.text == text and lb.pos.distance_to(pos) < 60.0: return
+	labels.append({"pos": pos + Vector2(0, -24), "text": text, "color": color, "life": life, "max": life})
 
 func pollen_stream(from: Vector2, to: Vector2, color: Color) -> void:
 	streams.append({"a": from, "b": to, "t": 0.0, "dur": 1.6, "color": color})
@@ -73,6 +83,13 @@ func _draw() -> void:
 		var a: float = clampf(p.life / (p.max * 0.5), 0.0, 1.0)
 		draw_circle(p.pos, p.size * 2.5, Color(p.color, 0.08 * a))
 		draw_circle(p.pos, p.size, _hdr(Color(p.color, a), 1.9))
+	var font := ThemeDB.fallback_font
+	for lb in labels:
+		var a: float = clampf(lb.life / 0.6, 0.0, 1.0)
+		var w := font.get_string_size(lb.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+		var r := Rect2(lb.pos - Vector2(w * 0.5 + 8, 16), Vector2(w + 16, 22))
+		draw_rect(r, Color(0, 0, 0, 0.55 * a))
+		draw_string(font, lb.pos + Vector2(-w * 0.5, 0), lb.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(lb.color, a))
 	for tf in trail_fade:
 		_trail(tf[0], tf[1] / 0.35)
 	if trail.size() > 1: _trail(trail, 1.0)

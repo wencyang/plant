@@ -10,6 +10,12 @@ var darks: Array = []     # {pos, r}
 var waters: Array = []    # Rect2
 var wilds: Array = []     # {pos, genome, pollinated, nodes: PackedVector2Array}
 var lures: Array = []     # Vector2
+var vents: Array = []     # {pos, r} ember vents: burn non-waxy shoots
+var dews: Array = []      # {pos, sap, taken} collectible sap drops
+var switches: Array = []  # {pos, opens: [gate ids], on}
+var decoys: Array = []    # {path: [Vector2], speed, u, pos} wandering false lights
+var updrafts: Array = []  # {rect: Rect2, dir: Vector2}
+var time := 0.0
 var seed_pos := Vector2(800, 860)
 
 const LURE_LIGHT := 250.0
@@ -22,15 +28,26 @@ func load_level(def: Dictionary) -> void:
 	waters.clear()
 	wilds.clear()
 	lures.clear()
+	vents.clear()
+	for v in def.get("vents", []): vents.append({"pos": v.pos, "r": v.r})
+	dews.clear()
+	for d in def.get("dews", []): dews.append({"pos": d, "sap": 260.0, "taken": false})
+	switches.clear()
+	for sw in def.get("switches", []): switches.append({"pos": sw.pos, "opens": sw.opens, "on": false})
+	decoys.clear()
+	for dc in def.get("decoys", []): decoys.append({"path": dc.path, "speed": dc.get("speed", 60.0), "u": 0.0, "pos": dc.path[0]})
+	updrafts.clear()
+	for u in def.get("updrafts", []): updrafts.append({"rect": u.rect, "dir": u.get("dir", Vector2.UP)})
+	time = 0.0
 	seed_pos = def.seed
 	for r in def.get("rocks", []):
 		var poly := PackedVector2Array(r.poly)
-		rocks.append({"poly": poly, "aabb": _aabb(poly), "slick": r.get("slick", false), "soil": r.get("soil", false)})
+		rocks.append({"poly": poly, "aabb": _aabb(poly), "slick": r.get("slick", false), "soil": r.get("soil", false), "gate": r.get("gate", ""), "open": false})
 	for c in def.get("crystals", []):
 		var poly := PackedVector2Array(c)
 		crystals.append({"poly": poly, "aabb": _aabb(poly), "alive": true})
 	for g in def.get("goals", []):
-		goals.append({"pos": g.pos, "r": g.get("r", 42.0), "bonus": g.get("bonus", 500.0), "reached": false})
+		goals.append({"pos": g.pos, "r": g.get("r", 42.0), "bonus": g.get("bonus", 500.0), "reached": false, "after": g.get("after", -1)})
 	for d in def.get("darks", []):
 		darks.append({"pos": d.pos, "r": d.r})
 	for w in def.get("waters", []):
@@ -53,6 +70,7 @@ func blocked(a: Vector2, b: Vector2, kind := 0) -> Dictionary:
 	for i in rocks.size():
 		var r: Dictionary = rocks[i]
 		if kind == 1 and r.soil: continue
+		if r.open: continue
 		if r.aabb.intersects(seg) and _hits(r.poly, a, b):
 			return _result("slick" if r.slick else "rock", i, r.poly, b)
 	return {"hit": false}
@@ -83,6 +101,7 @@ func near_support(p: Vector2, dist: float, include_slick: bool) -> bool:
 	var probe := Rect2(p, Vector2.ZERO).grow(dist)
 	for r in rocks:
 		if r.slick and not include_slick: continue
+		if r.open: continue
 		if r.aabb.intersects(probe) and _poly_dist(r.poly, p) < dist: return true
 	for c in crystals:
 		if c.alive and c.aabb.intersects(probe) and _poly_dist(c.poly, p) < dist: return true
@@ -106,6 +125,11 @@ func lure_near(p: Vector2, dist := LURE_LIGHT) -> bool:
 		if p.distance_to(l) < dist: return true
 	return false
 
+func in_vent(p: Vector2) -> bool:
+	for v in vents:
+		if p.distance_to(v.pos) < v.r: return true
+	return false
+
 func in_water(p: Vector2) -> bool:
 	for w in waters:
 		if w.has_point(p): return true
@@ -122,12 +146,51 @@ func nearest_water(p: Vector2) -> Vector2:
 ## Light sources that attract shoots: lures (strong), unreached sunwells.
 func lights() -> Array:
 	var out: Array = []
-	for i in lures.size(): out.append({"pos": lures[i], "s": 3.0, "r": 1600.0, "near": 140.0, "lure": i})
+	for i in lures.size(): out.append({"pos": lures[i], "s": 3.6, "r": 1600.0, "near": 140.0, "lure": i})
+	for d in decoys: out.append({"pos": d.pos, "s": 3.0, "r": 700.0, "decoy": true})
+	for sw in switches:
+		if not sw.on: out.append({"pos": sw.pos, "s": 0.5, "r": 450.0, "close": 160.0})
 	for g in goals:
-		if not g.reached: out.append({"pos": g.pos, "s": 1.1, "r": 2400.0, "close": 380.0})
+		if not g.reached and not sleeping(g): out.append({"pos": g.pos, "s": 1.1, "r": 2400.0, "close": 380.0})
 	return out
 
 func all_goals_reached() -> bool:
 	for g in goals:
 		if not g.reached: return false
 	return not goals.is_empty()
+
+
+func sleeping(g: Dictionary) -> bool:
+	var a: int = int(g.get("after", -1))
+	return a >= 0 and not goals[a].reached
+
+func update(dt: float) -> void:
+	time += dt
+	for d in decoys:
+		var path: Array = d.path
+		var total := 0.0
+		for i in path.size():
+			total += (path[(i + 1) % path.size()] - path[i]).length()
+		d.u = fmod(d.u + d.speed * dt, total)
+		var walked := 0.0
+		for i in path.size():
+			var a: Vector2 = path[i]
+			var b: Vector2 = path[(i + 1) % path.size()]
+			var l := (b - a).length()
+			if walked + l >= d.u:
+				d.pos = a.lerp(b, (d.u - walked) / max(l, 0.001))
+				break
+			walked += l
+
+func updraft_at(p: Vector2):
+	for u in updrafts:
+		if u.rect.has_point(p): return u
+	return null
+
+func open_gates(ids: Array) -> Array:
+	var opened: Array = []
+	for i in rocks.size():
+		if str(rocks[i].gate) != "" and ids.has(rocks[i].gate) and not rocks[i].open:
+			rocks[i].open = true
+			opened.append(i)
+	return opened

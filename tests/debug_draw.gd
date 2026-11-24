@@ -12,13 +12,20 @@ class Drawer extends Node2D:
 		var font := ThemeDB.fallback_font
 		for i in sessions.size():
 			var s = sessions[i]
-			var ox := (i % 4) * 400.0
-			var oy := int(i / 4) * 260.0
+			var ox := (i % 3) * 405.0
+			var oy := int(i / 3) * 265.0
 			draw_set_transform(Vector2(ox, oy), 0, Vector2(0.25, 0.25))
 			draw_rect(Rect2(0, 0, 1600, 1000), Color(0.08, 0.1, 0.14))
 			for d in s.world.darks: draw_circle(d.pos, d.r, Color(0, 0, 0, 0.8))
+			for v in s.world.vents: draw_circle(v.pos, v.r, Color(1, 0.4, 0.1, 0.35))
 			for w in s.world.waters: draw_rect(w, Color(0.2, 0.4, 0.9))
-			for r in s.world.rocks: draw_colored_polygon(r.poly, Color(0.6, 0.75, 0.9) if r.slick else (Color(0.35, 0.27, 0.2) if r.soil else Color(0.45, 0.45, 0.5)))
+			for u in s.world.updrafts: draw_rect(u.rect, Color(0.5, 0.7, 1.0, 0.2))
+			for r in s.world.rocks:
+				if r.open: continue
+				draw_colored_polygon(r.poly, Color(0.9, 0.7, 0.2) if str(r.gate) != "" else (Color(0.6, 0.75, 0.9) if r.slick else (Color(0.35, 0.27, 0.2) if r.soil else Color(0.45, 0.45, 0.5))))
+			for sw in s.world.switches: draw_circle(sw.pos, 20, Color(1, 0.8, 0) if not sw.on else Color(0.3, 1, 0.3))
+			for dc in s.world.decoys:
+				for pp in dc.path: draw_circle(pp, 14, Color(0.8, 0.3, 1.0))
 			for c in s.world.crystals:
 				if c.alive: draw_colored_polygon(c.poly, Color(0.5, 0.9, 1.0))
 			for g in s.world.goals: draw_circle(g.pos, g.r, Color(1, 0.9, 0.3) if not g.reached else Color(1, 0.4, 0.8))
@@ -42,7 +49,7 @@ func _initialize() -> void:
 	call_deferred("run")
 
 func run() -> void:
-	root.size = Vector2i(1600, 520)
+	root.size = Vector2i(1600, 540)
 	var d := Drawer.new()
 	root.add_child(d)
 	var args := OS.get_cmdline_user_args()
@@ -52,7 +59,7 @@ func run() -> void:
 		var g := Levels.starter().duplicate(true)
 		var lures: Array = []
 		for t in parts[1].split(","):
-			if t in ["thorns", "glow", "tendrils", "roots"]: g[t] = 1
+			if t in ["thorns", "glow", "tendrils", "roots", "buoyant", "waxy"]: g[t] = 1
 		if parts.size() > 2 and parts[2] != "":
 			for l in parts[2].split(";"):
 				var xy := l.split(",")

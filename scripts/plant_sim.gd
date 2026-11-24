@@ -82,6 +82,12 @@ func _promote() -> void:
 	if best != null:
 		best.rank = 0
 
+func _stop(tip: Dictionary, why: String, p: Vector2) -> void:
+	tip.state = "stopped"
+	tip.why = why
+	if tip.kind == 0 and not wild:
+		events.append({"t": "stop", "why": why, "pos": p, "leader": int(tip.get("rank", 0)) == 0})
+
 func hit_this_frame(tip: Dictionary, _p: Vector2) -> bool:
 	return float(tip.get("commit", 0.0)) > 0.3
 
@@ -118,7 +124,8 @@ func step(dt: float) -> void:
 	var speed: float = float(genome.speed)
 	var photo: float = float(genome.photo)
 	var curl: float = float(genome.curl)
-	var reach: float = float(genome.reach)
+	var reach: float = float(genome.reach) * (2.3 if int(genome.get("buoyant", 0)) > 0 else 1.0)
+	var waxy := int(genome.get("waxy", 0)) > 0
 	var tendrils := int(genome.tendrils) > 0
 	var thorns := int(genome.thorns) > 0
 	var glow := int(genome.glow) > 0
@@ -150,8 +157,11 @@ func step(dt: float) -> void:
 		# steering
 		var desire := Vector2.DOWN
 		if k == 0:
-			desire = Vector2.UP * 0.3
 			var visited: Array = tip.get("visited", [])
+			var lured := false
+			for l in lights:
+				if l.has("lure") and not visited.has(l.pos) and l.pos.distance_to(p) < 1000.0: lured = true
+			desire = Vector2.UP * (0.05 if lured else 0.3)
 			for l in lights:
 				if l.has("lure") and visited.has(l.pos): continue
 				var d: Vector2 = l.pos - p
@@ -168,11 +178,20 @@ func step(dt: float) -> void:
 					desire += d / dist * f
 			desire = desire.normalized()
 			var commit: float = tip.get("commit", 0.0)
+			var in_draft: bool = (not wild) and world.updraft_at(p) != null
 			if commit > 0.0:
 				tip.commit = commit - dt
-			else:
+			elif not in_draft:
 				tip.dir = tip.dir.lerp(desire, clampf(photo * 1.5 * dt, 0.0, 1.0)).normalized()
 			tip.dir = tip.dir.rotated(curl * 0.8 * dt + rng.randf_range(-0.9, 0.9) * dt)
+			if not wild:
+				var ud = world.updraft_at(p)
+				if ud != null:
+					tip.dir = tip.dir.lerp(ud.dir, clampf(6.0 * dt, 0.0, 1.0)).normalized()
+					tip.unsupported = 0.0
+					tip.carried = true
+				else:
+					tip.carried = false
 		else:
 			var target := Vector2.DOWN
 			if not wild and not world.waters.is_empty():
@@ -211,25 +230,29 @@ func step(dt: float) -> void:
 									break
 							if resolved: break
 					if not resolved:
-						tip.state = "stopped"
-						if k == 0: events.append({"t": "stop", "pos": p, "why": "slick" if hit.kind == "slick" else "blocked"})
+						_stop(tip, "slick" if hit.kind == "slick" else "blocked", p)
 						continue
+			if k == 0 and not waxy and world.in_vent(np):
+				_stop(tip, "burn", np)
+				continue
 			if not world.bounds.grow(-6).has_point(np):
-				tip.state = "stopped"
+				_stop(tip, "edge", p)
 				continue
 			if k == 0:
-				if world.near_support(np, SUPPORT_DIST, tendrils): tip.unsupported = 0.0
-				else: tip.unsupported += step_len
+				if world.near_support(np, SUPPORT_DIST, tendrils):
+					if tip.unsupported > reach * 0.35: events.append({"t": "lean", "pos": np})
+					tip.unsupported = 0.0
+				elif not tip.get("carried", false): tip.unsupported += step_len
+				tip.reach_frac = clampf(1.0 - tip.unsupported / reach, 0.0, 1.0)
 				if tip.unsupported > reach:
-					tip.state = "stopped"
-					events.append({"t": "droop", "pos": np})
+					_stop(tip, "droop", np)
 					continue
 		# a tip that hasn't made headway in a while gives up (saves energy)
 		var anchor: Vector2 = tip.get("anchor", p)
 		tip.anchor_t = float(tip.get("anchor_t", 0.0)) + dt
 		if tip.anchor_t > 2.5:
 			if p.distance_to(anchor) < speed * 0.5:
-				tip.state = "stopped"
+				_stop(tip, "stuck", p)
 				continue
 			tip.anchor = p
 			tip.anchor_t = 0.0
@@ -238,6 +261,7 @@ func step(dt: float) -> void:
 		tip.len = float(tip.get("len", 0.0)) + step_len
 		if k == 0 and tip.len > RANK_MAX_LEN[min(rank, 2)]:
 			tip.state = "stopped"
+			tip.why = "done"
 			continue
 		# advance
 		tip.seg += step_len
@@ -266,12 +290,25 @@ func step(dt: float) -> void:
 		if k == 0:
 			for gi in world.goals.size():
 				var g: Dictionary = world.goals[gi]
-				if not g.reached and np.distance_to(g.pos) < g.r:
+				if not g.reached and not world.sleeping(g) and np.distance_to(g.pos) < g.r:
 					g.reached = true
 					energy += float(g.bonus)
 					energy_max = max(energy_max, energy)
 					blooms.append(tip.node)
 					events.append({"t": "goal", "i": gi, "pos": g.pos})
+			for di in world.dews.size():
+				var dw: Dictionary = world.dews[di]
+				if not dw.taken and np.distance_to(dw.pos) < 30.0:
+					dw.taken = true
+					energy += float(dw.sap)
+					energy_max = max(energy_max, energy)
+					events.append({"t": "dew", "i": di, "pos": dw.pos})
+			for si in world.switches.size():
+				var sw: Dictionary = world.switches[si]
+				if not sw.on and np.distance_to(sw.pos) < 46.0:
+					sw.on = true
+					var opened: Array = world.open_gates(sw.opens)
+					events.append({"t": "switch", "i": si, "pos": sw.pos, "opened": opened})
 			for wi in world.wilds.size():
 				var w: Dictionary = world.wilds[wi]
 				if w.pollinated: continue

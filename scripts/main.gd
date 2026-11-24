@@ -47,6 +47,15 @@ var swipe_pts: Array = []
 var demo_lure_t := 0.0
 var pending_cross: Array = []
 
+const STOP_TEXT := {
+	"droop": "drooped — no rock to lean on",
+	"slick": "slipped on glass",
+	"blocked": "blocked",
+	"burn": "withered in the heat",
+	"edge": "left the garden",
+	"stuck": "wedged — no way forward",
+}
+
 func _ready() -> void:
 	randomize()
 	var f := SystemFont.new()
@@ -223,12 +232,13 @@ func _build_hud() -> void:
 	row.anchor_right = 1.0
 	row.anchor_top = 1.0
 	row.anchor_bottom = 1.0
-	row.offset_left = -620
+	row.offset_left = -720
 	row.offset_right = -36
 	row.offset_top = -80
 	row.offset_bottom = -30
 	row.alignment = BoxContainer.ALIGNMENT_END
 	hud.add_child(row)
+	row.add_child(_button("Hint", _toggle_hint))
 	row.add_child(_button("Seeds", func(): show_vault(true)))
 	row.add_child(_button("Fast", _toggle_fast))
 	row.add_child(_button("Restart", func(): _start_level(level_index, current_seed)))
@@ -255,6 +265,13 @@ func _draw_meter() -> void:
 	hud_meter.draw_rect(Rect2(x, y, w, 10), Color(1, 1, 1, 0.08))
 	var col := Color(0.55, 1.0, 0.7)
 	hud_meter.draw_rect(Rect2(x, y, w * frac, 10), Color(col.r * 1.6, col.g * 1.6, col.b * 1.6))
+	var dt: int = session.dew_total()
+	if dt > 0:
+		hud_meter.draw_string(font, Vector2(x, y + 34), "DEW  %d / %d" % [session.dew_taken(), dt], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.65, 0.9, 1.0) if session.dew_taken() == dt else DIM)
+	var par: int = int(session.def.get("par", 99))
+	if par < 99:
+		var over: bool = session.tools_used > par
+		hud_meter.draw_string(font, Vector2(x + w - 150, y + 34), "TOOLS  %d / par %d" % [session.tools_used, par], HORIZONTAL_ALIGNMENT_RIGHT, 150, 14, Color(1.0, 0.6, 0.5) if over else DIM)
 	# tools
 	var bx := 40.0
 	var by := 140.0
@@ -276,14 +293,20 @@ func _draw_meter() -> void:
 # ================================================================== title / demo
 
 func _demo_level() -> Dictionary:
-	return {"id": "demo", "palette": ["night", "teal", "dusk", "violet"][randi() % 4], "seed": Vector2(800, 900), "energy": 999999.0, "lures": 1, "prunes": 0,
+	return {"id": "demo", "palette": ["night", "teal", "dusk", "violet", "aurora", "coral", "jungle", "mist"][randi() % 8], "seed": Vector2(800, 900), "energy": 999999.0, "lures": 1, "prunes": 0,
 		"rocks": [{"poly": Levels.ground(912, 10, 3), "soil": true}, {"poly": Levels.blob(330, 760, 150, 46, 3)}, {"poly": Levels.blob(1300, 720, 140, 44, 5)}],
-		"goals": [], "wilds": [{"pos": Vector2(250, 718), "genome": "Lanternwort", "energy": 320.0}, {"pos": Vector2(1360, 680), "genome": "Hookvine", "energy": 300.0}, {"pos": Vector2(1500, 906), "genome": "Spinebrush", "energy": 280.0}]}
+		"goals": [], "wilds": _demo_wilds()}
+
+func _demo_wilds() -> Array:
+	var sp: Array = Levels.SPECIES.duplicate()
+	sp.shuffle()
+	return [{"pos": Vector2(250, 718), "genome": sp[0], "energy": 320.0}, {"pos": Vector2(1360, 680), "genome": sp[1], "energy": 300.0},
+		{"pos": Vector2(1500, 906), "genome": sp[2], "energy": 280.0}, {"pos": Vector2(90, 906), "genome": sp[3], "energy": 260.0}]
 
 func _demo_genome() -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-	var names := ["Spinebrush", "Lanternwort", "Hookvine", "Deeproot"]
+	var names: Array = Levels.SPECIES.duplicate()
 	names.shuffle()
 	var a: Dictionary = Genome.cross(Levels.starter(), Levels.wild(names[0]), rng)[0]
 	return Genome.cross(a, Levels.wild(names[1]), rng)[rng.randi_range(0, 1)]
@@ -324,6 +347,7 @@ func _start_demo() -> void:
 	session.start(_demo_level(), _demo_genome(), randi())
 	session.add_lure(Vector2(800, 500))
 	view.build(session)
+	view.show_guide = false
 	demo_lure_t = 0.0
 
 func _toggle_sound() -> void:
@@ -348,11 +372,11 @@ func show_map() -> void:
 	var head := _label("THE GARDENS", 46, Color(0.92, 1.0, 0.95), title_font)
 	head.position = Vector2(80, 60)
 	o.add_child(head)
-	var sub := _label("Each garden asks for a different gift. Breed it from what grows wild there.", 19, DIM)
+	var sub := _label("Each garden asks for a different gift or trick.   ✦ %d / %d stars" % [save.total_stars(), Levels.all().size() * 3], 19, DIM)
 	sub.position = Vector2(84, 124)
 	o.add_child(sub)
 	var grid := GridContainer.new()
-	grid.columns = 4
+	grid.columns = 7
 	grid.add_theme_constant_override("h_separation", 22)
 	grid.add_theme_constant_override("v_separation", 22)
 	grid.position = Vector2(80, 190)
@@ -363,29 +387,33 @@ func show_map() -> void:
 		var open: bool = save.unlocked(i)
 		var done: bool = save.completed.has(L.id)
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(340, 150)
+		b.custom_minimum_size = Vector2(196, 120)
 		b.focus_mode = Control.FOCUS_NONE
 		b.disabled = not open
 		b.text = ""
 		grid.add_child(b)
-		var num := _label("%02d" % (i + 1), 15, DIM)
-		num.position = Vector2(22, 18)
+		var num := _label("%02d" % (i + 1), 13, DIM)
+		num.position = Vector2(16, 12)
 		b.add_child(num)
-		var tl := _label(L.title if open else "Locked", 28, INK if open else Color(1, 1, 1, 0.3))
-		tl.position = Vector2(22, 40)
+		var tl := _label(L.title if open else "Locked", 19, INK if open else Color(1, 1, 1, 0.3))
+		tl.position = Vector2(16, 36)
+		tl.size = Vector2(170, 50)
+		tl.autowrap_mode = TextServer.AUTOWRAP_WORD
 		b.add_child(tl)
-		var st := _label("Bloomed ✦" if done else ("Open" if open else "Bloom the garden before it"), 15, Color(1.0, 0.9, 0.6) if done else DIM)
-		st.position = Vector2(22, 108)
+		var sc: int = save.star_count(L.id)
+		var stxt := "✦".repeat(sc) + "✧".repeat(3 - sc) if done else ("Open" if open else "")
+		var st := _label(stxt, 18 if done else 14, Color(1.0, 0.85, 0.5) if done else DIM)
+		st.position = Vector2(16, 88)
 		b.add_child(st)
 		var idx := i
 		b.pressed.connect(func():
 			sfx.play("ui", 1.1, -6)
 			show_level_intro(idx))
 	var back := _button("Back", show_title)
-	back.position = Vector2(80, 560)
+	back.position = Vector2(80, 620)
 	o.add_child(back)
 	var vault := _button("Seed Vault", func(): show_vault(false))
-	vault.position = Vector2(190, 560)
+	vault.position = Vector2(190, 620)
 	o.add_child(vault)
 
 # ================================================================== level intro + seed choice
@@ -419,7 +447,7 @@ func _seed_grid(parent: Control, at: Vector2, on_pick: Callable) -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	parent.add_child(scroll)
 	var grid := GridContainer.new()
-	grid.columns = 5
+	grid.columns = 7
 	grid.add_theme_constant_override("h_separation", 16)
 	grid.add_theme_constant_override("v_separation", 16)
 	scroll.add_child(grid)
@@ -526,16 +554,27 @@ func _start_level(index: int, gnm: Dictionary) -> void:
 	stuck_shown = false
 	reasons.clear()
 	pending_cross.clear()
+	drag_lure = -1
+	pressing = false
+	swiping = false
+	swipe_pts = []
 	var L: Dictionary = Levels.all()[index]
 	session = Session.new()
 	session.start(L, gnm, 1 + index * 17)
 	view.build(session)
+	view.plant_view.show_reach = true
+	view.show_guide = index <= 1 or not save.completed.has(L.id) and int(save.get_meta("fails_" + L.id, 0)) >= 1
 	hud.visible = true
 	hud_title.text = L.title.to_upper()
 	hud_hint.text = L.hint
 	sfx.music("battle")
 	sfx.play("start", 1.0, -8)
 	_toast("Planted %s" % gnm.name, 1.8)
+
+func _toggle_hint() -> void:
+	view.show_guide = not view.show_guide
+	if view.show_guide:
+		_toast(Levels.all()[level_index].hint, 4.0)
 
 func _toggle_fast() -> void:
 	fast = not fast
@@ -558,6 +597,14 @@ func _process(delta: float) -> void:
 	for i in steps:
 		session.step(delta)
 	_drain_events()
+	if session.plant.energy <= 0.0 and not reasons.has("sap"):
+		reasons["sap"] = 1
+		for tip in session.plant.tips:
+			if tip.kind == 0 and tip.state == "grow" and int(tip.get("rank", 0)) == 0:
+				view.fx.label(session.plant.pos[tip.node], "out of sap", Color(1.0, 0.8, 0.5), 4.0)
+				break
+		hud_meter.modulate = Color(1.6, 0.6, 0.6)
+		hud_meter.create_tween().tween_property(hud_meter, "modulate", Color.WHITE, 1.2)
 	if session.won() and not won_shown:
 		won_shown = true
 		_on_win()
@@ -594,9 +641,25 @@ func _drain_events() -> void:
 				if not demo: _toast("Crystal shattered!")
 			"stop":
 				reasons[e.why] = int(reasons.get(e.why, 0)) + 1
-				view.fx.burst(e.pos, Color(0.9, 0.8, 0.6), 6, 40.0, 30.0, 1.5, 0.8)
-			"droop":
-				reasons["droop"] = int(reasons.get("droop", 0)) + 1
+				if e.why == "burn": view.fx.burst(e.pos, Color(1.0, 0.5, 0.2), 14, 80.0, -60.0, 1.8, 1.0)
+				else: view.fx.burst(e.pos, Color(0.9, 0.8, 0.6), 6, 40.0, 30.0, 1.5, 0.8)
+				if not demo and e.leader:
+					var msg: String = STOP_TEXT.get(e.why, "")
+					if msg != "": view.fx.label(e.pos, msg, Color(1.0, 0.75, 0.6))
+			"lean":
+				if not demo: view.fx.ring(e.pos, Color(0.5, 1.0, 0.65), 26.0, 0.5)
+			"dew":
+				view.fx.burst(e.pos, Color(0.5, 0.9, 1.0), 26, 140.0, 40.0, 2.2, 1.2)
+				view.fx.ring(e.pos, Color(0.6, 0.95, 1.0), 60.0, 0.6)
+				sfx.play("pop", 1.6, -2)
+				if not demo: view.fx.label(e.pos, "+ sap  (%d/%d dew)" % [session.dew_taken(), session.dew_total()], Color(0.7, 0.95, 1.0), 1.8)
+			"switch":
+				view.fx.burst(e.pos, Color(1.0, 0.85, 0.4), 40, 200.0, 0.0, 2.4, 1.4)
+				view.fx.ring(e.pos, Color(1.0, 0.85, 0.4), 120.0, 0.9)
+				sfx.play("zap", 1.3)
+				if not demo:
+					_toast("A stone gate grinds open")
+					for ri in e.opened: view.open_gate(ri)
 			"drink":
 				view.fx.burst(e.pos, Color(0.5, 0.85, 1.0), 3, 30.0, -40.0, 1.6, 0.9)
 	if not demo:
@@ -613,6 +676,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_ESCAPE: show_map()
 			KEY_F: _toggle_fast()
 			KEY_S: show_vault(true)
+			KEY_H: _toggle_hint()
 			KEY_SPACE:
 				paused = not paused
 				_toast("Paused" if paused else "Growing", 0.8)
@@ -645,6 +709,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion:
 		view.hover_lure = _lure_at(pos)
 		if not pressing: return
+		if drag_lure >= session.world.lures.size(): drag_lure = -1
 		if drag_lure >= 0:
 			if not session.world.in_dark(pos):
 				session.world.lures[drag_lure] = pos
@@ -834,8 +899,8 @@ func _on_win() -> void:
 	var o := _new_overlay(0.35)
 	var box := PanelContainer.new()
 	box.set_anchors_preset(Control.PRESET_CENTER)
-	box.position = Vector2(-330, -170)
-	box.custom_minimum_size = Vector2(660, 300)
+	box.position = Vector2(-360, -230)
+	box.custom_minimum_size = Vector2(720, 420)
 	o.add_child(box)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 14)
@@ -846,6 +911,17 @@ func _on_win() -> void:
 	var msg := _label("%s woke every sunwell in %s.\nIts seed is safe in your vault." % [current_seed.name, L.title], 19, INK)
 	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(msg)
+	var got: Array = session.stars()
+	var best: Array = save.record_stars(L.id, got)
+	var lines := ["Bloomed", "All dew collected  (%d / %d)" % [session.dew_taken(), session.dew_total()], "Within tool par  (%d / %d used)" % [session.tools_used, int(L.get("par", 99))]]
+	for i in 3:
+		var sl := _label(("✦  " if got[i] else "✧  ") + lines[i] + ("" if got[i] or not best[i] else "   (earned before)"), 19, Color(1.0, 0.88, 0.55) if got[i] else Color(1, 1, 1, 0.4))
+		sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(sl)
+	if not (got[1] and got[2]):
+		var tip := _label("Try again for every star — collect the dew, use fewer tools.", 15, DIM)
+		tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(tip)
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 14)
@@ -854,24 +930,31 @@ func _on_win() -> void:
 		row.add_child(_button("Next garden", func(): show_level_intro(level_index + 1), 20))
 	else:
 		row.add_child(_button("You've woken every garden ✦", show_map, 20))
+	row.add_child(_button("Replay", func(): _start_level(level_index, current_seed), 18))
 	row.add_child(_button("Stay a while", func():
 		_close_overlay()), 18)
 	row.add_child(_button("Map", show_map, 18))
 
 func _on_stuck() -> void:
 	sfx.play("back", 0.8, -6)
+	var L: Dictionary = Levels.all()[level_index]
+	save.set_meta("fails_" + L.id, int(save.get_meta("fails_" + L.id, 0)) + 1)
+	view.show_guide = true
 	var why := "Your plant has stopped growing."
-	if reasons.has("slick"): why = "Its shoots slipped on glassy rock. Something that clings could climb it."
+	if reasons.has("burn"): why = "Its shoots withered in the ember vents. A waxy plant could pass through the heat."
+	elif reasons.has("slick"): why = "Its shoots slipped on glassy rock. Something that clings could climb it."
 	elif reasons.has("dark"): why = "It stalled in the dark. A plant that glows brings its own light."
 	elif not session.world.crystals.is_empty() and _crystal_alive():
 		if int(current_seed.thorns) > 0: why = "Lead a thorny shoot straight into the crystal to shatter it. Try a lure just below it."
 		else: why = "Crystal blocks the way. Something thorny might break through."
 	elif session.plant.energy <= 0.0: why = "It ran out of sap. Prune wasteful shoots, or find a plant that drinks."
-	elif reasons.has("droop"): why = "It drooped reaching into open air. Stems need rock to lean on — guide it with a lure."
+	elif reasons.has("droop"):
+		if int(current_seed.get("buoyant", 0)) > 0: why = "Even floating, it drooped. Use a lure to guide it down onto ground on the far side."
+		else: why = "It drooped reaching into open air. Stems need rock to lean on — guide it with a lure, or find a plant that floats."
 	var wild_left := false
 	for w in session.world.wilds:
 		if not w.pollinated: wild_left = true
-	if wild_left: why += "\nThere's a wild plant here you haven't touched yet."
+	if wild_left: why += "\nThere's a wild plant here you haven't touched yet. Hints are on — follow the markers."
 	var p := PanelContainer.new()
 	p.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	p.position = Vector2(-430, -230)

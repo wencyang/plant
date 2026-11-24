@@ -16,6 +16,7 @@ var fruit_grow: Dictionary = {}
 var sway_amount := 1.0
 var highlight := 0.0
 var emissive := 1.0
+var show_reach := false
 
 var c_stem_base: Color
 var c_stem_tip: Color
@@ -61,7 +62,8 @@ func _process(delta: float) -> void:
 		if tip.kind != 0: continue
 		var n: int = tip.node
 		if sim.alive[n] == 0: continue
-		var resting: bool = tip.state == "stopped" or bloom_all
+		var failed: bool = tip.state == "stopped" and str(tip.get("why", "done")) != "done" and int(tip.get("rank", 0)) == 0
+		var resting: bool = (tip.state == "stopped" and not failed) or bloom_all
 		if resting:
 			flower_open[n] = min(1.0, float(flower_open.get(n, 0.0)) + delta * (0.6 if not bloom_all else 10.0))
 	for n in sim.blooms:
@@ -145,6 +147,8 @@ func _draw() -> void:
 	# organs along stems
 	var thorns := int(g.thorns) > 0
 	var tendrils := int(g.tendrils) > 0
+	var buoyant := int(g.get("buoyant", 0)) > 0
+	var waxy := int(g.get("waxy", 0)) > 0
 	for n in range(2, count):
 		if sim.alive[n] == 0 or sim.kind[n] != 0: continue
 		var par: int = sim.parent[n]
@@ -174,6 +178,17 @@ func _draw() -> void:
 			draw_polyline(pts, Color.from_hsv(wrapf(float(g.hue) + 0.08, 0, 1), 0.55, 0.85), 1.6, true)
 		# leaves
 		_maybe_leaf(n, a, b, dir, age)
+		if buoyant and n % 11 == 7:
+			var side2 := 1.0 if (n / 11) % 2 == 0 else -1.0
+			var bob := sin(t * 1.6 + n) * 3.0
+			var c2 := b + dir.orthogonal() * side2 * (10.0 + bob) + Vector2(0, -8.0) * age
+			draw_line(b, c2, Color(c_stem_tip, 0.5), 1.0, true)
+			draw_circle(c2, 8.5 * age, Color(0.7, 0.88, 1.0, 0.22))
+			draw_arc(c2, 8.5 * age, 0, TAU, 20, Color(0.85, 0.95, 1.0, 0.6), 1.0, true)
+			draw_circle(c2 + Vector2(-2.5, -2.5) * age, 2.0 * age, _hdr(Color(1, 1, 1, 0.8), 1.4))
+		if waxy and n % 4 == 1:
+			draw_line(a + dir.orthogonal() * _width(n) * 0.25, b + dir.orthogonal() * _width(n) * 0.25, _hdr(Color(1.0, 0.95, 0.85, 0.55), 1.3), max(1.0, _width(n) * 0.16), true)
+			if n % 8 == 1: draw_circle(b - dir.orthogonal() * _width(n) * 0.5, 1.8, _hdr(Color(1.0, 0.8, 0.5, 0.9), 1.5))
 		if glow and n % 9 == 5:
 			var hang := b + Vector2(0, 9) * age
 			draw_line(b, hang, Color(c_stem_tip, 0.6), 1.0, true)
@@ -207,13 +222,34 @@ func _draw() -> void:
 			var pulse := 0.75 + 0.25 * sin(t * 6.0 + n)
 			draw_circle(p, 6.0, Color(c_stem_tip, 0.18))
 			draw_circle(p, 2.8, _hdr(c_stem_tip.lightened(0.4), 1.8 * pulse * emissive))
+			# reach ring: how much further this leader can stretch before it needs rock
+			if show_reach and int(tip.get("rank", 0)) == 0:
+				var fr: float = float(tip.get("reach_frac", 1.0))
+				var col := Color(0.45, 1.0, 0.6).lerp(Color(1.0, 0.75, 0.3), clampf((0.6 - fr) / 0.3, 0.0, 1.0))
+				if fr < 0.3: col = Color(1.0, 0.35, 0.3)
+				var wob := sin(t * 30.0) * 1.5 * clampf((0.25 - fr) * 4.0, 0.0, 1.0)
+				draw_arc(p + Vector2(wob, 0), 13.0, -PI * 0.5, -PI * 0.5 + TAU, 40, Color(1, 1, 1, 0.1), 2.0, true)
+				draw_arc(p + Vector2(wob, 0), 13.0, -PI * 0.5, -PI * 0.5 + TAU * fr, 40, _hdr(col, 1.5), 2.2, true)
+				if tip.get("carried", false):
+					draw_arc(p, 18.0, t * 3.0, t * 3.0 + 2.0, 12, _hdr(Color(0.7, 0.9, 1.0), 1.5), 1.5, true)
+		elif tip.state == "grow" and sim.energy <= 0.0 and show_reach and int(tip.get("rank", 0)) == 0:
+			draw_circle(p, 4.0, Color(0.6, 0.6, 0.6, 0.6))
 		elif tip.state == "stalled":
 			draw_circle(p, 3.0, Color(c_stem_tip, 0.35))
+			draw_arc(p, 12.0, 0, TAU, 24, Color(0.6, 0.55, 1.0, 0.4 + 0.3 * sin(t * 4.0)), 1.5, true)
+		elif tip.state == "stopped" and show_reach and int(tip.get("rank", 0)) == 0 and str(tip.get("why", "done")) != "done":
+			# wilted bud: this leader died here
+			var dead := Color(0.55, 0.5, 0.45)
+			var hang := p + Vector2(4, 9)
+			draw_line(p, hang, dead, 1.5, true)
+			draw_circle(hang, 4.0, dead.darkened(0.2))
+			draw_line(hang + Vector2(-3, -3), hang + Vector2(3, 3), Color(1.0, 0.45, 0.4, 0.8), 1.5, true)
+			draw_line(hang + Vector2(-3, 3), hang + Vector2(3, -3), Color(1.0, 0.45, 0.4, 0.8), 1.5, true)
 
 func _maybe_leaf(n: int, a: Vector2, b: Vector2, dir: Vector2, age: float) -> void:
 	var shape: int = int(g.leaf_shape)
 	var every := 3
-	if shape == 2: every = 4
+	if shape == 2 or shape == 5: every = 4
 	elif shape == 3: every = 2
 	if n % every != 0: return
 	var hsh := _hash(n)
@@ -228,6 +264,8 @@ func _maybe_leaf(n: int, a: Vector2, b: Vector2, dir: Vector2, age: float) -> vo
 		1: _leaf_fan(base, ang, size * 0.85)
 		2: _leaf_frond(base, ang, size * 1.25, age, side)
 		3: _leaf_needles(base, ang, size * 0.9)
+		4: _leaf_heart(base, ang, size * 0.8)
+		5: _leaf_ribbon(base, ang, size * 1.35, n)
 
 func _leaf_blade(base: Vector2, ang: float, size: float, _side: float) -> void:
 	var pts := PackedVector2Array()
@@ -323,6 +361,50 @@ func _leaf_frond(base: Vector2, ang: float, size: float, age: float, side: float
 			if int(g.pattern) == 3: draw_line(q, tip, _hdr(Color(c_leaf_b, 0.7), 1.6 * emissive), 1.0, true)
 		if int(g.pattern) == 1 and i % 3 == 0: draw_circle(q, 1.8, c_petal_dark)
 
+func _leaf_heart(base: Vector2, ang: float, size: float) -> void:
+	var pts := PackedVector2Array()
+	var cols := PackedColorArray()
+	for i in 28:
+		var a := TAU * i / 28.0
+		var hx := 16.0 * pow(sin(a), 3)
+		var hy := 13.0 * cos(a) - 5.0 * cos(2 * a) - 2.0 * cos(3 * a) - cos(4 * a)
+		var local := Vector2(-hy + 5.0, hx) * size / 19.0
+		pts.append(base + local.rotated(ang))
+		cols.append(c_leaf_a.lerp(c_leaf_b, clampf((local.x) / size, 0.0, 1.0)))
+	draw_polygon(pts, cols)
+	draw_line(base, base + Vector2(size * 0.95, 0).rotated(ang), Color(c_leaf_a.darkened(0.3), 0.7), 1.0, true)
+	if int(g.get("waxy", 0)) > 0:
+		draw_line(base + Vector2(size * 0.3, -size * 0.2).rotated(ang), base + Vector2(size * 0.7, -size * 0.25).rotated(ang), _hdr(Color(1, 1, 1, 0.55), 1.3), 2.0, true)
+	_leaf_pattern(base, ang, size, size * 0.4)
+	pts.append(pts[0])
+	draw_polyline(pts, Color(c_leaf_b.lightened(0.3), 0.35), 1.0, true)
+
+func _leaf_ribbon(base: Vector2, ang: float, size: float, n: int) -> void:
+	var left := PackedVector2Array()
+	var right := PackedVector2Array()
+	var cols := PackedColorArray()
+	var steps := 14
+	for i in range(steps + 1):
+		var u := float(i) / steps
+		var wave := sin(u * 7.0 + t * 2.2 + n) * size * 0.08 * u
+		var c := base + Vector2(size * u, wave).rotated(ang + u * 0.5)
+		var w := size * 0.11 * (1.0 - u * 0.55)
+		var nrm := Vector2(0, 1).rotated(ang + u * 0.5)
+		left.append(c - nrm * w)
+		right.append(c + nrm * w)
+	var pts := PackedVector2Array()
+	for i in left.size():
+		pts.append(left[i])
+		cols.append(c_leaf_a.lerp(c_leaf_b, float(i) / steps))
+	for i in range(right.size() - 1, -1, -1):
+		pts.append(right[i])
+		cols.append(c_leaf_a.lerp(c_leaf_b, float(i) / steps))
+	draw_polygon(pts, cols)
+	if int(g.pattern) == 2:
+		for k in 3: draw_circle(left[4 + k * 3].lerp(right[4 + k * 3], 0.5), 1.6, Color(c_petal, 0.9))
+	elif int(g.pattern) == 3:
+		draw_polyline(left.slice(0, 10), _hdr(Color(c_leaf_b, 0.6), 1.6), 1.0, true)
+
 func _leaf_needles(base: Vector2, ang: float, size: float) -> void:
 	for k in 5:
 		var a := ang + (k - 2) * 0.22
@@ -384,6 +466,32 @@ func _flower(c: Vector2, dir: Vector2, open: float, scale_k: float, seed_n: int)
 			draw_circle(c, s * 0.42, _hdr(c_center, 1.5 * pulse * emissive))
 			draw_colored_polygon(PackedVector2Array([c + Vector2(-s * 0.45, -s * 0.75), c + Vector2(0, -s * 1.15), c + Vector2(s * 0.45, -s * 0.75)]), c_leaf_a)
 			_petal_pattern(c, -PI * 0.5, s * 0.8)
+		4: # puff: dandelion sphere of glowing filaments
+			for i in petals * 3:
+				var a := TAU * i / (petals * 3) + spin * 0.5
+				var tip := c + Vector2(cos(a), sin(a)) * s * (0.85 + 0.1 * sin(i * 1.7))
+				draw_line(c, tip, Color(c_petal, 0.55), 1.0, true)
+				draw_circle(tip, 1.8 * scale_k, _hdr(c_petal, 1.4 * emissive))
+			draw_circle(c, s * 0.25, c_petal_dark)
+			draw_circle(c, s * 0.14, _hdr(c_center, 1.4 * emissive))
+		5: # orchid: two wide lips + three slender sepals
+			var up := dir.angle()
+			for k in 3:
+				var a := up + (k - 1) * 0.9
+				var tip := c + Vector2(cos(a), sin(a)) * s * 1.05
+				var w := Vector2(cos(a + 1.57), sin(a + 1.57)) * s * 0.13
+				draw_polygon(PackedVector2Array([c, c.lerp(tip, 0.5) + w, tip, c.lerp(tip, 0.5) - w]), PackedColorArray([c_petal_dark, c_petal, c_petal.lightened(0.2), c_petal]))
+			for sg in [-1.0, 1.0]:
+				var lip := PackedVector2Array()
+				for i in 12:
+					var a: float = up + PI * 0.5 * sg + (i / 11.0 - 0.5) * 1.4
+					lip.append(c + Vector2(cos(a), sin(a)) * s * (0.75 + 0.15 * sin(i * 1.3)))
+				lip.append(c)
+				draw_colored_polygon(lip, c_petal.lerp(c_center, 0.25))
+			var throat := c + Vector2(cos(up + PI), sin(up + PI)) * s * 0.35
+			draw_colored_polygon(PackedVector2Array([c + Vector2(0, -s * 0.2).rotated(up), throat, c + Vector2(0, s * 0.2).rotated(up)]), c_petal_dark)
+			_petal_pattern(c, up + PI, s * 0.7)
+			draw_circle(c, s * 0.16, _hdr(c_center, 1.6 * emissive))
 		3: # frill
 			for layer in 2:
 				var r := s * (1.0 - layer * 0.38)

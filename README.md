@@ -33,12 +33,30 @@ Your plant grows on its own. The **leading shoot** reaches for light, and side s
   | Glow | Lanternwort | Lets the plant grow in the dark and lights the darkness |
   | Tendrils | Hookvine | Clings to glass and climbs it |
   | Roots | Deeproot | Grows down through soil and drinks underground water for sap |
+  | Buoyant | Driftcap | Grows floating bladders, so it can reach about twice as far across open air (chasms) |
+  | Waxy | Emberwax | Grows through ember vents, the walls of heat that wither other shoots |
+  | Glow + Roots | Moonpetal | Carries both gifts at once |
+  | Thorns + Tendrils | Briarbell | Carries both gifts at once |
 
   The later gardens need two or three gifts at once, so you breed across generations.
 
-There are eight gardens: First Light, Twin Wells, Crystal Throat, Lanternless, Glass Cliff, Thirst, Shattered Spire and Heart of the Grove. Each one unlocks the next. Your seeds and progress are saved automatically.
+- **Reading your plant.**
+  - Each leading shoot wears a **reach ring**. It drains as the shoot stretches into open air and refills (with a green pulse) when the shoot touches rock. It turns red just before the shoot droops.
+  - When a shoot dies, it wilts on the spot with a label saying why: "drooped — no rock to lean on", "slipped on glass", "withered in the heat", "wedged". If the plant runs out of sap, "out of sap" appears at its tip.
+- **Growing downward.** Near a lure, shoots stop pulling upward, so you can lead them down into pits and shafts.
+- **Tricks in later gardens.**
+  - **Dew drops** refill sap.
+  - **Gold key-blooms** open stone gates elsewhere.
+  - **Decoy wisps** drag shoots toward hazards.
+  - **Updrafts** carry shoots so they never droop.
+  - **Sleeping sunwells** only wake after the one before them.
+- **Stars.** Each garden awards up to 3 stars: bloom it, collect all its dew, and use no more lures and prunes than the garden's par.
 
-**Keys:** **Space** pauses, **F** grows ×2, **R** restarts, **S** opens the seed vault, **Esc** goes to the map. When a plant stops growing, the game explains why and suggests what to try.
+There are twenty-one gardens. The first fourteen teach the gifts: First Light, Twin Wells, Crystal Throat, Lanternless, Glass Cliff, Thirst, Shattered Spire, Heart of the Grove, Drift Chasm, Ember Vents, Moon Garden, Briar Gate, Coral Steps and The Long Bloom. The last seven are built around tricks: Lockstone (grow down into a pit to open a gate), False Dawn (a decoy over the vents), Updraft Spires, Two Keys (lures as waypoints), Sunken Bloom (down a shaft into a dark cave), Mirror Wells (sunwells that wake in a chain) and The Heartwood. Each garden unlocks the next. Your seeds, stars and progress are saved automatically.
+
+**Hints:** press **Hint** or **H** to show ghost markers for where to place a lure, where to swipe, and which wild plant to touch. Hints come on automatically in the first two gardens and after you get stuck.
+
+**Keys:** **H** shows hints, **Space** pauses, **F** grows ×2, **R** restarts, **S** opens the seed vault, **Esc** goes to the map. When a plant stops growing, the game explains why and suggests what to try.
 
 ## Art
 

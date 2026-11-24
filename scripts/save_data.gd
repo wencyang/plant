@@ -8,6 +8,7 @@ const MAX_SEEDS := 40
 var seeds: Array = []        # genomes
 var completed: Dictionary = {}
 var species_met: Dictionary = {}
+var stars: Dictionary = {}   # level id -> [bool, bool, bool]
 var muted := false
 var path := PATH
 
@@ -24,16 +25,17 @@ func load_data() -> void:
 	if typeof(d) != TYPE_DICTIONARY: return
 	seeds = d.get("seeds", [])
 	for g in seeds:
-		for k in ["gen", "petals", "leaf_shape", "flower", "pattern", "stem", "thorns", "glow", "tendrils", "roots"]:
+		for k in ["gen", "petals", "leaf_shape", "flower", "pattern", "stem", "thorns", "glow", "tendrils", "roots", "buoyant", "waxy"]:
 			if g.has(k): g[k] = int(g[k])
 	completed = d.get("completed", {})
 	species_met = d.get("species_met", {})
+	stars = d.get("stars", {})
 	muted = bool(d.get("muted", false))
 
 func save() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f == null: return
-	f.store_string(JSON.stringify({"seeds": seeds, "completed": completed, "species_met": species_met, "muted": muted}))
+	f.store_string(JSON.stringify({"seeds": seeds, "completed": completed, "species_met": species_met, "stars": stars, "muted": muted}))
 
 func add_seed(g: Dictionary) -> void:
 	for s in seeds:
@@ -43,11 +45,31 @@ func add_seed(g: Dictionary) -> void:
 	save()
 
 func _same_traits(a: Dictionary, b: Dictionary) -> bool:
-	for t in ["thorns", "glow", "tendrils", "roots", "leaf_shape", "flower"]:
-		if int(a[t]) != int(b[t]): return false
+	for t in ["thorns", "glow", "tendrils", "roots", "buoyant", "waxy", "leaf_shape", "flower"]:
+		if int(a.get(t, 0)) != int(b.get(t, 0)): return false
 	return true
 
 func unlocked(index: int) -> bool:
 	if index == 0: return true
 	var prev: String = Levels.all()[index - 1].id
 	return completed.has(prev)
+
+
+func record_stars(id: String, got: Array) -> Array:
+	var old: Array = stars.get(id, [false, false, false])
+	var merged: Array = []
+	for i in 3: merged.append(bool(old[i]) or bool(got[i]))
+	stars[id] = merged
+	save()
+	return merged
+
+func star_count(id: String) -> int:
+	var n := 0
+	for b in stars.get(id, []):
+		if b: n += 1
+	return n
+
+func total_stars() -> int:
+	var n := 0
+	for id in stars: n += star_count(id)
+	return n

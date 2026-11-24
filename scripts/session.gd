@@ -12,6 +12,7 @@ var wild_sims: Array = []
 var lures_left := 0
 var prunes_left := 0
 var idle_time := 0.0
+var tools_used := 0
 
 func start(level: Dictionary, genome: Dictionary, seed_value := 1) -> void:
 	def = level
@@ -36,6 +37,7 @@ func start(level: Dictionary, genome: Dictionary, seed_value := 1) -> void:
 	plant.setup(genome, world, float(level.energy), seed_value)
 
 func step(dt: float) -> void:
+	world.update(dt)
 	plant.step(dt)
 	if plant.is_growing(): idle_time = 0.0
 	else: idle_time += dt
@@ -43,6 +45,7 @@ func step(dt: float) -> void:
 func add_lure(p: Vector2) -> bool:
 	if lures_left <= 0 or world.in_dark(p): return false
 	lures_left -= 1
+	tools_used += 1
 	world.lures.append(p)
 	return true
 
@@ -53,7 +56,9 @@ func remove_lure(i: int) -> void:
 func prune(a: Vector2, b: Vector2) -> Array:
 	if prunes_left <= 0: return []
 	var removed: Array = plant.prune(a, b)
-	if not removed.is_empty(): prunes_left -= 1
+	if not removed.is_empty():
+		prunes_left -= 1
+		tools_used += 1
 	return removed
 
 ## Cut along a hand-drawn swipe. Uses one prune if anything was cut.
@@ -62,7 +67,9 @@ func prune_path(points: Array) -> Array:
 	var removed: Array = []
 	for i in range(points.size() - 1):
 		removed.append_array(plant.prune(points[i], points[i + 1]))
-	if not removed.is_empty(): prunes_left -= 1
+	if not removed.is_empty():
+		prunes_left -= 1
+		tools_used += 1
 	return removed
 
 func won() -> bool:
@@ -70,3 +77,18 @@ func won() -> bool:
 
 func stuck() -> bool:
 	return not won() and idle_time > 1.5
+
+
+func dew_total() -> int:
+	return world.dews.size()
+
+func dew_taken() -> int:
+	var n := 0
+	for d in world.dews:
+		if d.taken: n += 1
+	return n
+
+## [bloomed, all dew, within tool par]
+func stars() -> Array:
+	var par: int = int(def.get("par", 99))
+	return [won(), dew_taken() == dew_total(), tools_used <= par]

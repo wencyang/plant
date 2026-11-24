@@ -3,15 +3,17 @@ extends RefCounted
 ## growth behaviour, form, colour, organs. Crossing takes each gene from one
 ## parent, so a hybrid visibly wears features from both.
 
-const TRAITS := ["thorns", "glow", "tendrils", "roots"]
+const TRAITS := ["thorns", "glow", "tendrils", "roots", "buoyant", "waxy"]
 const TRAIT_INFO := {
 	"thorns":   {"name": "Thorns",   "desc": "Thorny tips shatter crystal.",          "color": Color(1.0, 0.45, 0.35)},
 	"glow":     {"name": "Glow",     "desc": "Glows, so it can grow in the dark.",    "color": Color(0.55, 1.0, 0.85)},
 	"tendrils": {"name": "Tendrils", "desc": "Tendrils cling and climb glassy rock.", "color": Color(0.75, 0.95, 0.35)},
 	"roots":    {"name": "Roots",    "desc": "Roots seek water and drink energy.",   "color": Color(0.95, 0.8, 0.55)},
+	"buoyant":  {"name": "Buoyant",  "desc": "Floating bladders let it reach far across open air.", "color": Color(0.6, 0.8, 1.0)},
+	"waxy":     {"name": "Waxy",     "desc": "A waxy skin lets it grow through ember vents.",   "color": Color(1.0, 0.7, 0.3)},
 }
-const LEAF_NAMES := ["blade", "fan", "frond", "needle"]
-const FLOWER_NAMES := ["bell", "star", "lantern", "frill"]
+const LEAF_NAMES := ["blade", "fan", "frond", "needle", "heart", "ribbon"]
+const FLOWER_NAMES := ["bell", "star", "lantern", "frill", "puff", "orchid"]
 const PATTERN_NAMES := ["plain", "banded", "spotted", "veined"]
 const STEM_NAMES := ["smooth", "jointed", "twisted"]
 
@@ -27,7 +29,7 @@ static func make(d: Dictionary) -> Dictionary:
 		"name": "Firstling", "species": "Firstling", "gen": 1, "parents": [],
 		"speed": 70.0, "branch": 0.35, "spread": 0.6, "photo": 0.7, "curl": 0.0, "reach": 420.0,
 		"hue": 0.36, "hue2": 0.12, "leaf_shape": 0, "leaf_size": 1.0, "flower": 0, "petals": 5, "pattern": 0, "stem": 0,
-		"thorns": 0, "glow": 0, "tendrils": 0, "roots": 0, "origin": {},
+		"thorns": 0, "glow": 0, "tendrils": 0, "roots": 0, "buoyant": 0, "waxy": 0, "origin": {},
 	}
 	for k in d: g[k] = d[k]
 	return g

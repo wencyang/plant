@@ -13,6 +13,7 @@ var t := 0.0
 var sky: ColorRect
 var backdrop: Node2D
 var rock_layer: Node2D
+var rock_nodes: Array = []
 var deco: Node2D
 var crystal_nodes: Array = []
 var wild_views: Array = []
@@ -23,6 +24,9 @@ var fx: Node2D
 var hover_lure := -1
 var goal_bloom: Dictionary = {}
 var pollinated_glow: Dictionary = {}
+var show_guide := false
+var guide: Array = []
+var sparks: Array = []
 
 func build(s) -> void:
 	session = s
@@ -31,6 +35,7 @@ func build(s) -> void:
 		c.queue_free()
 	crystal_nodes.clear()
 	wild_views.clear()
+	rock_nodes.clear()
 	pal = Palettes.get_palette(str(s.def.get("palette", "dawn")))
 	sky = ColorRect.new()
 	sky.position = Vector2(-600, -400)
@@ -77,6 +82,7 @@ func build(s) -> void:
 			m.set_shader_parameter("height", min(r.aabb.size.y, 400.0))
 		poly.material = m
 		rock_layer.add_child(poly)
+		rock_nodes.append(poly)
 	for w in s.world.waters:
 		# the water pool shows through a window in the soil
 		var window := Polygon2D.new()
@@ -119,6 +125,8 @@ func build(s) -> void:
 	add_child(overlay)
 	fx = Fx.new()
 	add_child(fx)
+	guide = s.def.get("guide", [])
+	sparks.clear()
 
 func replace_plant(s) -> void:
 	session = s
@@ -141,6 +149,14 @@ func _process(delta: float) -> void:
 		if session.world.goals[gi].reached: goal_bloom[gi] = min(1.0, float(goal_bloom.get(gi, 0.0)) + delta * 0.8)
 	for wi in session.world.wilds.size():
 		if session.world.wilds[wi].pollinated: pollinated_glow[wi] = min(1.0, float(pollinated_glow.get(wi, 0.0)) + delta)
+	# rising embers from vents
+	for v in session.world.vents:
+		if randf() < delta * 6.0:
+			sparks.append({"p": v.pos + Vector2(randf_range(-v.r * 0.6, v.r * 0.6), randf_range(-v.r * 0.5, v.r * 0.5)), "v": Vector2(randf_range(-10, 10), randf_range(-90, -40)), "life": randf_range(1.0, 2.2)})
+	for sp in sparks:
+		sp.life -= delta
+		sp.p += sp.v * delta + Vector2(sin(t * 3.0 + sp.p.y * 0.05) * 12.0 * delta, 0)
+	sparks = sparks.filter(func(sp): return sp.life > 0.0)
 	overlay.queue_redraw()
 	deco.queue_redraw()
 
@@ -175,7 +191,27 @@ func _hdr(c: Color, k: float) -> Color:
 # ------------------------------------------------------------ rock tops
 
 func _draw_deco(deco: Node2D) -> void:
+	for v in session.world.vents:
+		for k in 4:
+			deco.draw_circle(v.pos, v.r * (1.0 - k * 0.2), Color(1.0, 0.35 + k * 0.08, 0.1, 0.035 + k * 0.012))
+		var wob := sin(t * 2.0 + v.pos.y * 0.03) * 8.0
+		deco.draw_line(v.pos + Vector2(wob, v.r * 0.6), v.pos + Vector2(-wob, -v.r * 0.6), Color(1.0, 0.6, 0.3, 0.06), v.r * 0.6, true)
+	if not session.world.vents.is_empty():
+		var bottom: Vector2 = session.world.vents[0].pos
+		deco.draw_line(bottom + Vector2(-40, -20), bottom + Vector2(40, -20), _hdr(Color(1.0, 0.45, 0.15), 2.4), 6.0, true)
+		for k in 6:
+			deco.draw_line(bottom + Vector2(-50 + k * 20, -18), bottom + Vector2(-46 + k * 20 + sin(t * 3 + k) * 4, -40 - k % 3 * 10), Color(1.0, 0.5, 0.2, 0.35), 2.0, true)
+	# updraft currents: rising luminous streaks
+	for u in session.world.updrafts:
+		var rect: Rect2 = u.rect
+		deco.draw_rect(rect, Color(0.7, 0.9, 1.0, 0.035))
+		for k in 14:
+			var x := rect.position.x + fmod(k * 37.0, rect.size.x)
+			var y := rect.end.y - fmod(t * 160.0 + k * 71.0, rect.size.y)
+			var d: Vector2 = u.dir * 26.0
+			deco.draw_line(Vector2(x, y), Vector2(x, y) + d, Color(0.8, 0.95, 1.0, 0.25), 1.5, true)
 	for r in session.world.rocks:
+		if r.open: continue
 		var poly: PackedVector2Array = r.poly
 		var area := 0.0
 		for i in poly.size():
@@ -191,6 +227,9 @@ func _draw_deco(deco: Node2D) -> void:
 			var nrm := Vector2(e.y, -e.x).normalized() * sgn
 			if r.slick:
 				deco.draw_line(a, b, _hdr(Color(0.8, 0.95, 1.0, 0.7), 1.6), 1.5, true)
+				continue
+			if str(r.gate) != "":
+				deco.draw_line(a, b, _hdr(Color(1.0, 0.8, 0.4, 0.7), 1.5), 2.0, true)
 				continue
 			if nrm.y < -0.55:
 				# glowing moss and little fungi along top edges
@@ -211,6 +250,13 @@ func _draw_deco(deco: Node2D) -> void:
 						deco.draw_circle(p + Vector2(0, -2), 2.0 + hsh * 6.0, Color(pal.moss, 0.25))
 			else:
 				deco.draw_line(a, b, Color(0, 0, 0, 0.35), 2.0, true)
+	for r in session.world.rocks:
+		if str(r.gate) == "" or r.open: continue
+		var c: Vector2 = r.aabb.get_center()
+		var pulse := 0.6 + 0.4 * sin(t * 2.0)
+		deco.draw_arc(c, 16.0, 0, TAU, 24, _hdr(Color(1.0, 0.8, 0.4, 0.8 * pulse), 1.6), 2.0, true)
+		deco.draw_line(c + Vector2(0, -10), c + Vector2(0, 10), _hdr(Color(1.0, 0.8, 0.4, 0.8 * pulse), 1.6), 2.0, true)
+		deco.draw_line(c + Vector2(-7, -3), c + Vector2(7, -3), _hdr(Color(1.0, 0.8, 0.4, 0.8 * pulse), 1.6), 2.0, true)
 	for c in session.world.crystals:
 		if not c.alive: continue
 		var pts: PackedVector2Array = c.poly.duplicate()
@@ -227,6 +273,11 @@ func _draw_overlay(overlay: Node2D) -> void:
 		var bloom: float = goal_bloom.get(gi, 0.0)
 		var pulse := 0.85 + 0.15 * sin(t * 2.2 + gi)
 		var sun: Color = pal.sun
+		if session.world.sleeping(g):
+			overlay.draw_circle(p, 14.0, Color(sun, 0.18))
+			overlay.draw_arc(p, 20.0, 0, TAU, 30, Color(sun, 0.25), 1.0, true)
+			overlay.draw_string(font, p + Vector2(-60, 40), "sleeping", HORIZONTAL_ALIGNMENT_CENTER, 120, 13, Color(sun, 0.5))
+			continue
 		# corona rays
 		for i in 12:
 			var a := TAU * i / 12.0 + t * 0.08
@@ -253,6 +304,47 @@ func _draw_overlay(overlay: Node2D) -> void:
 		for k in 5:
 			var a := t * (1.5 + k * 0.2) + k * 1.3
 			overlay.draw_circle(l + Vector2(cos(a), sin(a) * 0.7) * (16.0 + k * 3.0), 1.6, _hdr(cyan, 2.0))
+	for sp in sparks:
+		overlay.draw_circle(sp.p, 1.6, _hdr(Color(1.0, 0.55, 0.2, clampf(sp.life, 0.0, 1.0)), 2.2))
+	# dew drops
+	for d in session.world.dews:
+		if d.taken: continue
+		var p: Vector2 = d.pos + Vector2(0, sin(t * 2.0 + d.pos.x) * 3.0)
+		var drop := PackedVector2Array()
+		for i in 16:
+			var a := TAU * i / 16.0
+			var r: float = 11.0 * (1.0 + 0.6 * max(0.0, -sin(a)) * max(0.0, -sin(a)))
+			drop.append(p + Vector2(cos(a) * 9.0, sin(a) * r - 3.0))
+		var pulse := 0.7 + 0.3 * sin(t * 3.0 + d.pos.x)
+		for k in 3: overlay.draw_circle(p, 16.0 + k * 9.0, Color(0.5, 0.85, 1.0, 0.07 * pulse))
+		overlay.draw_colored_polygon(drop, _hdr(Color(0.55, 0.88, 1.0, 0.9), 1.25))
+		overlay.draw_circle(p + Vector2(-3, 0), 2.6, _hdr(Color(1, 1, 1, 0.95), 2.0))
+	# bloom switches: closed buds that open when touched
+	for sw in session.world.switches:
+		var p: Vector2 = sw.pos
+		var gold := Color(1.0, 0.8, 0.35)
+		if not sw.on:
+			var pulse := 0.6 + 0.4 * sin(t * 3.0)
+			overlay.draw_circle(p, 24.0 + pulse * 4.0, Color(gold, 0.07))
+			overlay.draw_colored_polygon(PackedVector2Array([p + Vector2(0, -16), p + Vector2(9, -2), p + Vector2(6, 10), p + Vector2(-6, 10), p + Vector2(-9, -2)]), Color(0.55, 0.4, 0.2))
+			overlay.draw_line(p + Vector2(0, -14), p + Vector2(0, 8), _hdr(Color(gold, 0.9), 1.8 * pulse), 1.5, true)
+			overlay.draw_arc(p, 30.0, t, t + 1.4, 12, Color(gold, 0.4), 1.5, true)
+		else:
+			for i in 6:
+				var a := TAU * i / 6.0 + t * 0.3
+				overlay.draw_colored_polygon(PackedVector2Array([p, p + Vector2(cos(a - 0.3), sin(a - 0.3)) * 18.0, p + Vector2(cos(a), sin(a)) * 24.0, p + Vector2(cos(a + 0.3), sin(a + 0.3)) * 18.0]), Color(gold, 0.85))
+			overlay.draw_circle(p, 6.0, _hdr(gold, 2.2))
+	# decoy wisps: violet false lights
+	for dc in session.world.decoys:
+		var p: Vector2 = dc.pos
+		var vio := Color(0.85, 0.45, 1.0)
+		for k in 4: overlay.draw_circle(p, 12.0 + k * 10.0, Color(vio, 0.045))
+		overlay.draw_circle(p, 6.0 + sin(t * 7.0) * 1.5, _hdr(vio, 2.2))
+		for k in 3:
+			var a := -t * 2.0 + k * TAU / 3.0
+			overlay.draw_circle(p + Vector2(cos(a), sin(a)) * 18.0, 1.6, _hdr(vio, 1.8))
+	if show_guide:
+		_draw_guide(overlay, font)
 	for wi in session.world.wilds.size():
 		var w = session.world.wilds[wi]
 		var gl: float = pollinated_glow.get(wi, 0.0)
@@ -260,3 +352,39 @@ func _draw_overlay(overlay: Node2D) -> void:
 			for k in 6:
 				var a := t * 0.9 + k * TAU / 6.0
 				overlay.draw_circle(w.pos + Vector2(cos(a) * 30.0, -60.0 + sin(a) * 40.0), 1.8, _hdr(Color(1.0, 0.95, 0.6, gl), 2.2))
+
+
+func _draw_guide(o: Node2D, font: Font) -> void:
+	var pulse := 0.5 + 0.5 * sin(t * 3.0)
+	var col := Color(1.0, 0.95, 0.75, 0.55 + 0.35 * pulse)
+	for gd in guide:
+		if gd.has("lure"):
+			var p: Vector2 = gd.lure
+			for k in 24:
+				if k % 2 == 0: o.draw_arc(p, 16.0 + pulse * 4.0, TAU * k / 24.0, TAU * (k + 1) / 24.0, 3, col, 2.0, true)
+			o.draw_circle(p, 3.0, col)
+			o.draw_string(font, p + Vector2(-60, -30), "place a lure", HORIZONTAL_ALIGNMENT_CENTER, 120, 15, col)
+		if gd.has("swipe"):
+			var a: Vector2 = gd.swipe[0]
+			var b: Vector2 = gd.swipe[1]
+			var n := 14
+			for k in n:
+				if k % 2 == 0: o.draw_line(a.lerp(b, float(k) / n), a.lerp(b, float(k + 1) / n), col, 3.0, true)
+			var m := a.lerp(b, fmod(t * 0.6, 1.0))
+			o.draw_circle(m, 4.0, _hdr(Color(1.0, 0.95, 0.8), 1.8))
+			o.draw_string(font, b + Vector2(14, 5), "swipe here", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, col)
+	for wi in session.world.wilds.size():
+		var w = session.world.wilds[wi]
+		if w.pollinated: continue
+		o.draw_string(font, w.pos + Vector2(-80, 24), "touch: " + str(w.genome.name), HORIZONTAL_ALIGNMENT_CENTER, 160, 14, Color(1.0, 0.9, 0.6, 0.6 + 0.3 * pulse))
+
+
+func open_gate(ri: int) -> void:
+	if ri < 0 or ri >= rock_nodes.size(): return
+	var poly: Polygon2D = rock_nodes[ri]
+	var tw := poly.create_tween()
+	tw.tween_property(poly, "modulate:a", 0.0, 1.2)
+	tw.parallel().tween_property(poly, "position:y", 40.0, 1.2)
+	var r = session.world.rocks[ri]
+	var c: Vector2 = r.aabb.get_center()
+	fx.burst(c, Color(0.8, 0.7, 0.6), 40, 160.0, 300.0, 3.0, 1.4)

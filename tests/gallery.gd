@@ -37,25 +37,26 @@ func run() -> void:
 	root.add_child(bg)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 3
-	var founders := [Levels.starter(), Levels.wild("Spinebrush"), Levels.wild("Lanternwort"), Levels.wild("Hookvine"), Levels.wild("Deeproot")]
+	var founders := [Levels.starter(), Levels.wild("Spinebrush"), Levels.wild("Lanternwort"), Levels.wild("Hookvine"), Levels.wild("Deeproot"),
+		Levels.wild("Driftcap"), Levels.wild("Emberwax"), Levels.wild("Moonpetal"), Levels.wild("Briarbell")]
 	var row2: Array = []
-	row2.append(Genome.cross(founders[0], founders[1], rng)[0])
-	row2.append(Genome.cross(founders[0], founders[2], rng)[0])
-	row2.append(Genome.cross(founders[0], founders[3], rng)[0])
-	var tg: Dictionary = Genome.cross(founders[0], founders[1], rng)[0]
-	var tgk: Dictionary = Genome.cross(tg, founders[2], rng)[0]
-	row2.append(tgk)
-	row2.append(Genome.cross(tgk, founders[3], rng)[0])
+	row2.append(Genome.cross(founders[5], founders[6], rng)[0])
+	row2.append(Genome.cross(founders[7], founders[1], rng)[0])
+	row2.append(Genome.cross(founders[8], founders[5], rng)[1])
+	var tg: Dictionary = Genome.cross(founders[0], founders[6], rng)[0]
+	row2.append(Genome.cross(tg, founders[5], rng)[0])
+	row2.append(Genome.cross(Genome.cross(tg, founders[7], rng)[0], founders[8], rng)[0])
 	var all: Array = founders + row2
 	for i in all.size():
 		var v := PlantView.new()
 		root.add_child(v)
-		v.position = Vector2(160 + (i % 5) * 320, 470 if i < 5 else 960)
+		v.position = Vector2(110 + (i % 7) * 230, 440 if i < 7 else 930)
 		v.setup(grown(all[i], 380.0, 11 + i), true)
 		v.preview = true
 		var l := Label.new()
 		l.text = "%s  G%d  %s" % [all[i].name, all[i].gen, ", ".join(Genome.traits(all[i]))]
-		l.position = v.position + Vector2(-140, 6)
+		l.position = v.position + Vector2(-100, 6)
+		l.add_theme_font_size_override("font_size", 13)
 		l.add_theme_color_override("font_color", Color(0.85, 0.9, 0.95))
 		root.add_child(l)
 	for f in 90: await process_frame
