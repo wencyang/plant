@@ -1,142 +1,68 @@
-# The Quiet Conservatory
+# Bloomward
 
-A playful Godot 4.7 plant breeding and collecting adventure with ink-drawn botanical art and illustrated landscapes. Plant a seed, make a new family, explore eight wild habitats, trade your harvest, and meet friendly Garden Fair visitors. Its core is **cross → fruit → seed → plant → cross the descendants again**. The later peaceful gardening direction supersedes the original auto-battler specification, which remains as historical design context.
+A living puzzle garden in Godot 4.7. Steer a plant as it grows in real time across luminous alien landscapes. Prune it to split it into new shoots. Cross-pollinate strange wild plants to breed the gifts each garden asks for.
+
+![Title](screenshots/01-title.png)
 
 ## Play
 
-Double-click **run.command** on macOS, or import **project.godot** in Godot 4.7 and press **F5** to play. No add-ons or downloaded assets are required.
+Double-click **run.command** on macOS, or open `project.godot` in Godot 4.7 (Forward+) and press **F5**.
 
 ```sh
-godot --path .
+/Applications/Godot.app/Contents/MacOS/Godot --path .
 ```
 
-- Play begins in the **Living valley**, with free walking and a plant companion. Use **WASD/arrows** or tap the map to walk; **E** interacts nearby and **B** opens crossing. **Party / Guide / Bag / Garden** stays at hand. **P** opens the party, **I** the bag, and **J** the journal. The small optional hint points toward a curiosity. Use **T** for the plant playground and **R** to preview a new morning. A useful traveling companion can act directly with **E**; tap a landmark to compare other plants and approaches. Your valley position saves with the garden.
-- **Party** holds up to six actual owned, living plants. Pick a leader or change a member; their exact order saves with your garden. The leader follows you on the riverside and in the large wilderness, using its real DNA-driven art. Plants keep their generation, care, size and family history. **Travel with this plant** recruits a newly collected specimen as your leader. Withered or sold plants leave the active party while their archive remains intact.
-- **Guide** tracks eight plant families from the real archive, opens individual DNA, and points to suitable habitats. **Bag** shows light, coins, field kits, seeds and fruit; choose a plant and use the existing care tools at their normal costs and limits. **Routes** offers eight illustrated regions, real walking trails and the world map; camps unlock fast travel.
-- **Garden** opens the grow patch, with a compact display shelf, current objective, traveling party and harvest overview on desktop. Phone shortcuts expose fruit, party and bag. Its three main actions remain **Plant a seed**, **Cross**, and **Explore**. Tap a plant for care or harvest; **Traits & more** opens its detailed record. **More** keeps the full collection, market, fair, rewards, records and settings. DNA previews, grafting and mutation remain under **More breeding options**.
-- The **Living valley** is a connected, illustrated place with a rain nursery, drifting-seed bend, forgotten cistern, moth garden, wind terrace, orchard, and walled courtyard. Walk with **WASD/arrows**, tap to find a route, and press **E** near a plant or landmark. Stone outcrops, the stream, and courtyard walls have matching collision. Restoring the cistern also opens a lower crossing and walking loop.
-- Meet wild plants and try their behaviors: drip water on River Fan, offer Gripvine a twig, watch a floating cap, or shade Moonbell. Take a free cutting and keep its real genes. Suitable plants work in every family and generation: **Round/Split + Waxy** provides sheltering leaves, **Climbing + Fibrous** provides gripping growth, and **Soft Glow** attracts moths. Any suitable plant can grow a crossing or light the courtyard.
-- Each of the **five growing places** accepts its own approaches: shelter seedlings with leaves or invite moss-carrying moths; catch seeds with leaf cups or tendril nets; refill the cistern with a rain funnel or root wick; attract moths with light; steady a windy terrace with a trellis or windbreak. Free unsuccessful trials record what happened. A successful planting changes the actual landscape, keeps the original plant in your collection, and gives one full-genome local seed. The same individual can help in several places.
-- Return with **shelter + glow** or **climbing + glow** in one real specimen to reveal a further night discovery: glowing nurseries, moth roosts, root channels, seed nets, and arches. Each place gives one additional night-variant seed. These discoveries and their phenotype evidence persist even after changing the planting or the original plant aging, being sold, or mutating. Rewards cannot be repeatedly claimed.
-- **Cross** accepts any two distinct grown plants and their descendants. The field bench uses the same real pollination, fruit, independently inherited embryos, seed extraction and planting as the nursery. Its preview shows actual trait and combined-behavior chances. **Meet your new plants** compares the two siblings, lets you name them, try them in the playground, and take one outside as the real traveling companion. No fixed parent recipe or generation-number key is required.
-- **Plant playground** lets you test a specimen in rain, wind, and night. The rain shelter, gripping tendrils, and attracted moths respond to its actual expressed DNA. These free experiments never change genes or spend supplies. Open it from a plant, the notebook, or **T** in the valley.
-- **Garden days move at your pace.** Plants no longer age while walking, reading, browsing menus, or leaving the game closed. **Rest until morning** (**R** in the valley, notebook, or bag) previews upcoming aging and withering, finishes growing fruit and seedlings, refills tool cooldowns, and advances the garden by one day. Ordinary grown plants begin aging after four mornings and wither after five; care can extend their life to twelve mornings. New seedlings start their grown life at zero. Existing saved ages and care bonuses are preserved. A withered plant leaves a final seed-bearing fruit and its full family record.
-- Click **Plant a seed**, or tap an empty plot in the grow patch. **Choose this seed** shows its grown appearance, the exact plot, the **10 light** cost, and the **12-second** growth time. Pick another empty square in the little plot map if you want a different spot, then press **Plant here**. **Watch it grow** returns to the garden with the new seedling selected and a countdown on its cell. It grows automatically; **Care for this plant → Sunshine lamp** can mature it immediately for 5 light.
-- Empty soil clearly says **+ Plant a seed**. Empty display shelves say **+ Add a plant** and offer mature plants to move there for free. The planting selector also offers **Move an existing plant here instead**. If the grow patch is full, choose a plant to bench and free its plot; if the seed box is empty, the game points to fruit extraction or the market.
-- Choose **Cross** to select any two distinct mature plants, including wild specimens, grafted plants, and previous hybrids. Pollination costs **10 gathered light**, keeps both parents, and grows a hybrid fruit on the mother in **18 seconds**. There is no species compatibility lock. Each mother can carry one cross fruit at a time; the same father can pollinate other mothers.
-- Open **More → Fruit & seeds** to harvest a ripe fruit, extract its seeds, then sow them for **10 light** each. A hybrid fruit contains **two independently inherited seeds** and harvest gives **30 light**. Seeds store the complete offspring genome, both parent IDs, generation, skills, and mixed ancestry; planting never resets a hybrid to a founding species. Seedlings mature in **12 seconds**, then can cross again with any other mature plant. G2 × another plant produces G3, and later generations retain their earlier ancestral contributions.
-- Mature plants also grow a **natural fruit every 45 seconds**. Harvesting one gives **10 light** and one lineage seed after extraction. Natural fruit and cross fruit are independent crops, so repeated breeding can continue without battling. Growing fruit, harvested fruit, extracted seeds, and seedlings all persist through closing the game.
-- Visit the **Garden Fair** to meet **Mira**, **Jun**, and **Pip**. They bring three daily show-and-tell requests based on real plant traits, height, weight, wild origins, and breeding journeys. Pick a matching living grown plant, show it, and receive coins, light, or supplies. **You keep the plant, its fruit, and its family history.** A visitor pays once each UTC day; rewards never depend on battles.
-- Open **My ribbons** at the fair for seven permanent gardening milestones: grow a planted seed, raise a two-parent offspring, grow mixed ancestry, reach generation 3, collect a wild friend, discover four patterns, and meet seven founding families. Eligible ribbons have one-time gifts and remain earned after a plant is later sold or withers. **Say hello** gives a plant a happy little reaction without spending resources.
-- Open the **Tool shed**, or choose **Give this plant some love** while inspecting a plant. Every individual has a persistent **height in centimeters and weight in grams**, shaped by its genes, mixed ancestry, growth stage, and its own natural variation. **Stretch feed** costs 12 light and adds 15% of natural height per dose; **Chunky compost** costs 12 light and adds 20% of natural weight. Each allows four uses, and the plant visibly grows taller or fuller. These care bonuses belong to the individual; its seeds still inherit its DNA.
-- The **Watering can** is free and adds 0.2 garden days of life, with a 60-second refill and five uses per plant. **Life tonic** costs 10 light, adds two garden days per dose, and allows three doses. Together they can extend a plant's lifetime from five to **twelve player-directed garden days**, delaying aging too. Care cannot revive a naturally withered plant. **Sunshine lamp** matures a seedling for 5 light; **Ripening spray** makes its growing natural and hybrid fruit ready to harvest for 8 light, with a 30-second refill and five uses. Tool cards show the benefit, cost, availability, and the plant's remaining life before use.
-- Open **Market** to sell an individual plant, harvested fruit, or stored seed for **coins**. **See offer** opens an itemized quote; **Sell** completes that specific trade. Plants start at 20 coins, fruit at 8, and seeds at 4. Rarity, genetic traits, vigor, mixed ancestry, bounded generation premiums, and natural plant size add value. Seedlings and older plants receive condition adjustments; withered plants receive a small compost offer. Care-grown size adds at most three coins. Fruit premiums reflect its best seed and how many seeds it contains; selling a fruit transfers all its seeds too.
-- The market's deterministic **daily wish list** adds 6 coins for the wanted type and 4 for the wanted pattern. Each sale reduces the next offer in that category by four percentage points, stopping at 60% after ten sales; demand resets at 00:00 UTC. The **Prices** tab explains the rules, and every review shows exact additions and deductions. Quotes stay stable when the stall reopens; a changed item or offer requires a fresh review. Seed references follow the exact snapshot rather than a shifting inventory slot.
-- Sold plants leave the owned garden and beds, while their DNA and full family relationships remain readable through **Receipts → Visit its family record**. Favorites must be unpinned before sale, and hybrid fruit or ripe natural fruit must be harvested first. The market shop exchanges coins for sunlight, field kits, founding seeds, grafting material, and mutation agents. Wallet, supply history, sales, purchases, and sold ownership persist locally; older saves start with an empty coin wallet. This is an offline NPC market.
-- Open **Traits & breeding** on a plant or stored seed to understand what it shows, which alternatives it carries, and what it can pass on. Pigments have names and color swatches; trait cards explain leaf shape, flowers, sheen, glow, size, inherited talents, and parental origins. Dormant flower genes are grouped separately. Genome identifiers and encoded ACTG records are available under the optional **Advanced · encoded records** section.
-- Choose **Choose a mate & predict offspring** or **Preview offspring traits** in the laboratory to compare real inherited chances, choose a target trait, and see the best available mates for it. For example, Solid/Striped × Solid/Solid has a **25%** chance of visibly striped G2 offspring; choosing a Striped/Striped mate raises it to **75%**. A carrier’s 50% chance of passing an allele is distinct from the child’s chance of showing it. The preview includes possible offspring appearances, ability outcomes and inherited stat ranges; **Use this pair in the laboratory** prefills the actual parents without spending resources.
-- The **Graft** option under **More breeding options** accepts different plant types as host and donor. A successful graft records the donor's anatomy and genes, and its trait can pass to future descendants at reduced probability. Mutation is available in the same laboratory.
-- Choose **Routes → World map**, or **More → Wild trails**, to walk into a top-down pixel world and find new parents. Move with **WASD / arrow keys**, click or tap a destination, or use the touch D-pad. Press **E / Space / Enter** near a marked plant to investigate. **Home** returns to the exact garden you left.
-- Wild plants grow at **182 patches across eight biomes**: Mosswood, Amber Hollow, Sporefen, Sunken Glade, Glassfall Coast, Moonfen, Ember Ridge, and Ancient Grove. The world is **160 × 128 tiles—16 times its original area**. Press **M / Map** to plan a route; visit the nine camps to unlock fast travel. **Study** is free and improves collection odds; **Collect** spends one field kit. A mature Vine can assist for one kit and five light. Exact odds appear before each attempt. Successful cuttings immediately become mature owned plants, with their original genes and wild provenance. **Supplies** packs five kits for 20 gathered light; collected patches regrow next field day.
-- Open **Settings → Language → 简体中文** for Simplified Chinese, or select **English**. Language switches immediately and is saved; original plant IDs, names, and genes remain intact. A bundled Noto Chinese font is included for reliable glyph rendering.
-- **Settings** also controls master, music, ambience, and effect volumes, plus mute. Original garden and wilderness music crossfade between contexts. Footsteps, discoveries, collecting, breeding, grafting, mutation, and blooms have distinct sounds.
-- Drag a specimen packet into a soil cell, onto the display bed, or back into the tray to bench it. Choose **Traits & more → Move to another plot** for tap-to-place. **Move** swaps occupied cells.
-- Tap a plant for its compact inspection; **Examine**, or a long press, opens its genome, stats, history, and three generations of ancestors and descendants. Rename or pin favorites there.
-- Parent slots accept dragged specimens and selectors. Inheritance, costs, fruit progress, and mixed ancestry appear before and after propagation. **Codex** records seven founding species, patterns, pigments, and permanent collection milestones. Older reward seeds remain plantable as lineage tendencies.
-- Use **Observe** beside the display bed to gather beauty milestones. Collection rewards and daily growth provide extra light and seeds alongside fruit harvests.
+## How it plays
 
-On desktop, the game opens in a large window up to **2880 × 2000 physical pixels**, fitted to the monitor. The interface scales automatically while the canvas renders at full window resolution. **Settings → Display & resolution** offers window presets and monitor selection; **F11** switches to native-resolution fullscreen. Display preferences are stored separately from the garden.
+Your plant grows on its own. The **leading shoot** reaches for light, and side shoots stay shorter and burst into flowers. Each garden has one or more **sunwells**. Wake all of them to make the garden bloom.
 
-The interface responds to desktop and portrait windows down to 390 × 780. Escape closes an overlay. Buttons and specimen cells accept keyboard focus and Enter.
+- **Lures.** Click to place a glowing lure and drag it to steer. Shoots that reach a lure carry on past it, so a few lures make a route of waypoints. Right-click a lure to take it back.
+- **Pruning.** Swipe across a stem to cut it. The cut piece falls away, some of its sap comes back to you, and the stump wakes up as **two new leading shoots**. That's how you send one plant two ways at once.
+- **Physical rules.**
+  - A stem can only stretch so far into open air. It needs rock to lean on, or it droops.
+  - Sap is limited.
+  - Darkness stops growth, and lures can't be placed in it.
+  - Crystal blocks the way.
+  - Ordinary shoots slip off glassy rock and die.
+- **Cross-pollination.** Touch a wild plant with any shoot. A fruit ripens with **three hybrid seeds**, and they all go to your **Seed Vault**. Each seed takes every visible feature from one parent or the other: leaf shape, flower form, petal count, both colours, pattern, stem style, and gifts. The reveal screen shows which parent each feature came from. The first seed always carries every gift from both parents.
+- **Gifts.**
 
-## Implemented
+  | Gift | Comes from | What it does |
+  |---|---|---|
+  | Thorns | Spinebrush | Shatters crystal |
+  | Glow | Lanternwort | Lets the plant grow in the dark and lights the darkness |
+  | Tendrils | Hookvine | Clings to glass and climbs it |
+  | Roots | Deeproot | Grows down through soil and drinks underground water for sap |
 
-- Seven base species and eight behavioral types; carnivorous plants appear through radiation reversion or inherited lineage, never as starters.
-- Eight redesigned ink-drawn botanical sprites, each a transparent 1024 × 1536 source frame, with layered foliage, veins, flower stamens, mushroom gills, pitcher rims, traps, and fine roots. Runtime gene pigments, six tissue patterns, form, shape, surface, size, graft colors, deformity, and rare glow preserve the fine line art and botanical anatomy. Alpha framing and real mipmaps keep cards sharp; wider soil cells give plants the full card height and inspection offers a larger close-up. The earlier 320 × 384 procedural renderer remains a missing-asset fallback. Artwork is documented in [assets/plants](assets/plants/README.md), with the new final prompt set in [landscape asset notes](assets/landscapes/prompts.json).
-- A deterministic 160 × 128 tile overworld with eight habitats, 182 wild collection patches, nine camps, a route atlas and visited-camp travel. HD terrain is rendered as bounded, mipmapped 16 × 12-tile chunks rather than one enormous image. Includes an ink-drawn botanist, isometric field shelters, illustrated region panoramas, ponds, bridges, tree collision, camera following, tap-to-pathfind, keyboard and touch controls. Wild collection uses finite supplies, study bonuses, visible odds, persistent encounter attempts, and daily patch regrowth. All seven founding species can be collected in the field; deep-field carnivorous forms stay rare.
-- English and Simplified Chinese presentation with reversible runtime translation, CJK glyphs bundled under OFL1.1, translated phenotypes/odds/results/tooltips, and canonical saved data.
-- A bright paper-and-leaf garden interface with cheerful plant cards, pixel tool illustrations, and a responsive tool shed. Individual height and weight appear on plant cards and inspections. Six care tools provide real lifetime, size, maturation, and fruit-ripening effects with persistent doses and cooldowns; acquired growth stays separate from inherited genes.
-- A responsive, bilingual market with pixel stall and item icons, separate coins, deterministic daily demand, bounded supply discounts, itemized review-before-sale quotes, stable seed identities, five useful supplies, newest-first receipts, and preserved sold-plant genealogy.
-- Two original 64-second stereo music loops, a forest ambience bed, thirteen pooled event effects, scene crossfades, independent volume settings, and mute. Audio assets are synthesized in `tools/generate_audio.py`; no third-party music or samples are used.
-- A complete pollination, fruit, seed extraction, sowing, maturation, and repeated-crossing loop. All distinct mature parent pairs are supported. Full diploid genomes and weighted ancestry survive seeds and later generations, including crosses between hybrids. Diploid expressed/carried alleles, independent inheritance, ±10% parental stat variance, skills, recessive traits, G3+ combined patterns, and reduced graft inheritance remain active. Generations grant no flat stat bonus.
-- Cross-species grafting with permanent donor anatomy/genome records, two-graft limit, 90%/65% base graft compatibility with second-graft rejection, protected favorite donors and cooldowns. Mutation uses 70% change / 20% unchanged / 10% deformity; radiation has an 8% carnivorous chance within the change outcome.
-- Six display slots, live diversity/harmony/rarity scoring, beauty thresholds, species pattern pages, complete pattern-family and atlas rewards.
-- Atomic local saves, previous-save recovery, full pedigrees, growing fruit, harvested fruit inventory, complete-genome seeds, mixed ancestry, discoveries that survive mutation, saved bed positions, display selection, and tray order. Existing V1 gardens and older seed snapshots migrate without deleting plants or resetting progress. Map position, visited camps, discovered habitats, field kits, patch history, and active wild encounters are also preserved. Language, sound, and display preferences are stored independently from the garden archive. Saves live at Godot's `user://conservatory_v1.json`; on macOS this is normally `~/Library/Application Support/Godot/app_userdata/The Quiet Conservatory/`.
+  The later gardens need two or three gifts at once, so you breed across generations.
 
-This is an offline gardening game. Visitors and market demand rotate deterministically each UTC day; permanent ribbons and family histories stay in the local save. The project is ready for Godot export; platform export templates are installed separately through Godot.
+There are eight gardens: First Light, Twin Wells, Crystal Throat, Lanternless, Glass Cliff, Thirst, Shattered Spire and Heart of the Grove. Each one unlocks the next. Your seeds and progress are saved automatically.
 
-## Illustrated plants and wild landscapes
+**Keys:** **Space** pauses, **F** grows ×2, **R** restarts, **S** opens the seed vault, **Esc** goes to the map. When a plant stops growing, the game explains why and suggests what to try.
 
-Eight original panoramic landscapes and eight redesigned transparent plant families follow the supplied fine-ink, flat-color art direction. The same plant portraits appear at home, in the field, in encounters, and in DNA/breeding previews. Inherited pigments, stripes, spots, flower petal counts, mixed anatomy, grafts, care-grown size, and age remain driven by the actual specimen. The previous source art is retained beside the new `assets/plants/illustrated/` set.
+## Art
 
-Each region contains three stable growing habitats (24 total): ferns favor cool gullies, flowers favor sunny terraces, mushrooms favor damp islands and cisterns, roots hold banks and fissures, and vines or pale companions follow walls and host trunks. New patches draw from a 75% resident / 25% companion pool. Field clues name the likely families; rare pitcher plants retain their discovery requirement. Started encounters and previously seen legacy patches keep their original individual. Collected plants save their habitat provenance.
+Everything is drawn at runtime with HDR bloom: gene-driven plant rendering, shader-painted rock, glass, crystal, water and living darkness, plus layered megaflora silhouettes, light shafts and drifting spores. A plant's look comes straight from its genome, so hybrids visibly wear features from both parents. The music and sound effects are the original synthesized set in `assets/audio`.
 
-Choose **Where this family grows →** from a plant or its traits page, then **Follow this trail →** to walk toward a suitable available patch. The field panorama, nearby growing-spot clue, illustrated atlas, and encounter backdrop all describe the same place. Existing camps, movement, route collisions, and daily regrowth remain active.
+## Code map
 
-Generation prompts and asset notes are recorded in `assets/landscapes/prompts.json` and `assets/landscapes/ART_DIRECTION.md`.
+- `scripts/genome.gd`: genes, crossing, and where each feature came from.
+- `scripts/plant_sim.gd`: real-time growth. Light-seeking, leading and side shoots, leaning on rock, reach limits, darkness, roots, collisions, pruning, pollination.
+- `scripts/world_sim.gd`: puzzle geometry and queries.
+- `scripts/levels.gd`: the eight gardens and the wild species.
+- `scripts/session.gd`: one attempt at a garden.
+- `scripts/view/`: `plant_view.gd` (plant rendering), `level_view.gd`, `backdrop.gd`, `fx.gd`, `palettes.gd`.
+- `shaders/`: sky, rock, glass, crystal, water, darkness, vignette.
+- `scripts/main.gd`: title, map, seed choice, HUD, input, cross-pollination reveal, win and stuck screens.
 
-## Verification
+## Tests
 
 ```sh
-godot --headless --path . --script res://tests/living_valley_test.gd
-godot --headless --path . --script res://tests/garden_day_test.gd
-godot --headless --path . --script res://tests/model_test.gd
-godot --headless --path . --script res://tests/integration_test.gd
-godot --headless --path . --script res://tests/reproduction_integration_test.gd
-godot --headless --path . --script res://tests/dna_test.gd
-godot --headless --path . --script res://tests/genetics_guide_test.gd
-godot --headless --path . --script res://tests/genetics_guide_integration_test.gd
-godot --headless --path . --script res://tests/plant_care_test.gd
-godot --headless --path . --script res://tests/plant_care_integration_test.gd
-godot --headless --path . --script res://tests/garden_fair_test.gd
-godot --headless --path . --script res://tests/garden_fair_integration_test.gd
-godot --headless --path . --script res://tests/market_model_test.gd
-godot --headless --path . --script res://tests/market_integration_test.gd
-godot --headless --path . --script res://tests/planting_model_test.gd
-godot --headless --path . --script res://tests/planting_integration_test.gd
-godot --headless --path . --script res://tests/wild_test.gd
-godot --headless --path . --script res://tests/wild_preview_test.gd
-godot --headless --path . --script res://tests/wilderness_test.gd
-godot --headless --path . --script res://tests/habitat_model_test.gd
-godot --headless --path . --script res://tests/adventure_model_test.gd
-godot --headless --path . --script res://tests/adventure_integration_test.gd
-godot --headless --path . --script res://tests/simple_ui_test.gd
-godot --headless --path . --script res://tests/travel_party_test.gd
-godot --headless --path . --script res://tests/field_adventure_ui_test.gd
-godot --headless --path . --script res://tests/habitat_integration_test.gd
-godot --headless --path . --script res://tests/field_integration_test.gd
-godot --headless --path . --script res://tests/display_test.gd
-godot --headless --path . --script res://tests/audio_test.gd
-godot --headless --path . --script res://tests/localization_test.gd
-godot --headless --path . --script res://tests/settings_integration_test.gd
-godot --path . --script res://tests/plant_art_test.gd
-godot --path . --script res://tests/plant_care_art_test.gd
+G=/Applications/Godot.app/Contents/MacOS/Godot
+$G --headless --path . --script res://tests/solve_test.gd           # each garden solvable with the right gifts, blocked without them
+$G --path . --quit-after 6000 --script res://tests/input_test.gd     # simulated lure / drag / recall / swipe-prune
+$G --path . --quit-after 20000 --script res://tests/capture.gd       # screenshots of every screen
+$G --path . --quit-after 900 --script res://tests/gallery.gd         # plant gallery: species + hybrids
 ```
 
-Model checks exercise inheritance, risks, rewards, complete lineage saves, corruption recovery, read-only previews, and permanent collection progress. Reproduction integration checks drive the actual controls from pollination through fruit harvest, seed extraction and sowing to G2, then repeat through G3 and G4, with reloads between stages and Chinese mobile bounds. Fair checks exercise exact rewards, daily requests, kept plants, permanent ribbons, and old-save migration. Other integration checks run collection, fair visits, and planting loops and enforce desktop/mobile overlay and garden bounds.
-
-Readable genetics checks validate analytical predictions against actual births and drive the visible/hidden trait cards, mate selection, goal chances, free laboratory prefill, optional encoded records, and English/Chinese desktop/mobile layouts.
-
-Market checks exercise exact price sums, daily demand, saturation floors, condition and size premiums, stable seed selection, stale offers, repeated clicks, protected favorites and fruit, sold-parent archives, every shop purchase, save migration, malformed-ledger rejection, and large seed banks. UI checks drive actual trade controls in English and Chinese on desktop and mobile. `tests/market_visual_preview.gd` captures real quotes, sales, purchases, receipts, and sold archives using a disposable silent garden.
-
-Planting checks tap actual empty soil, choose and review full-genome seeds, cancel safely, and plant into the exact selected plot. They verify stable seed references after inventory shifts, saved seedlings and parentage, visible growth and care actions, atomic failures for occupied plots, missing seeds and low light, full-garden guidance, and English/Chinese desktop/mobile bounds.
-
-Plant care checks drive the actual tool shed entry, specimen selector, and all six tools; verify exact costs, cooldowns, treatment caps, saved measurements, extended survival, unchanged DNA and stored fruit embryos; and check English/Chinese desktop/mobile bounds. Native care artwork checks verify that extra height and weight change the rendered silhouette and that aging follows the extended lifetime.
-
-`tests/plant_care_visual_preview.gd` captures the bright garden and tool shed, treatment results, grown silhouettes, and Chinese mobile layouts with a temporary garden.
-
-Field tests cover save migration, exact collection odds and costs, stable encounters, all species pools, daily regrowth, real keyboard movement, every patch being reachable, mobile HUD bounds, and collecting a wild plant → returning home → breeding its descendant.
-
-Botanical art checks use the native GPU renderer to verify transparency, mipmaps, actual visible genetic variations and growth states, and a fixed shared-texture cache. Map artwork previews the same deterministic organism as its encounter without changing saves, IDs, resources, or random state. `tests/plant_art_preview.gd` renders all eight plant types; `tests/hybrid_art_preview.gd` reviews every cross-type pair, multi-generation anatomy, grafts, literal petal counts, and natural withering; `tests/breeding_visual_preview.gd` captures the complete Chinese breeding, DNA, fruit, and seed interfaces; `tests/botanical_game_preview.gd` captures the actual garden, close-ups, fair visitors, wild specimens, and Chinese mobile layouts using a temporary save.
-
-`tests/new_features_preview.gd` checks the expanded atlas, distant habitats, English/Chinese settings and mobile Chinese layouts with a silent temporary save.
-
-`tests/high_resolution_preview.gd` verifies actual large-window and native-fullscreen screenshot dimensions with a temporary save. `tests/field_visual_preview.gd` captures the pixel garden, exploration, and wild encounters. `tests/visual_preview.gd` renders desktop/mobile screenshots to `screenshots/` using the native renderer and a separate temporary save, leaving the player's garden untouched.
-
-`tests/garden_fair_visual_preview.gd` uses disposable silent gardens to capture visitors, exact plant-show gifts, permanent ribbons, friendly talents, and English/Chinese desktop/mobile views. Legacy win and battle counters remain readable in old saves solely for archive compatibility.
-
-`tests/landscape_visual_preview.gd` captures every illustrated region, encounter scenery, atlas, and Chinese mobile field views in a disposable garden. `tests/illustrated_plants_preview.gd` captures all eight redesigned plant families and real genetic, hybrid, graft and aging variants.
-
-`tests/adventure_visual_preview.gd` captures a full Moonbell Crossing playthrough in disposable gardens: collecting parents, real cross fruit and siblings, both genetic routes, Moonbell and a glowing G3 courtyard, with English/Chinese desktop and phone views.
-
-`tests/living_valley_test.gd` drives the real valley controls through observation, collection, all five places, independent crosses, chosen mornings, a combined-phenotype return, persistent rewards, legal tap navigation, and Chinese phone layouts. Run it with the native renderer to capture the playthrough in `screenshots/living-valley-*.png`; it always uses an isolated, silent temporary garden. These are functional and visual checks; player enjoyment still needs external playtesting.
+`archive/sprout-brawl/` holds the earlier auto-battler prototype. Godot ignores this folder. The original garden sim is still on `main`.
