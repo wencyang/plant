@@ -11,6 +11,7 @@ const Guidance := preload("res://scripts/garden_guidance.gd")
 const LevelView := preload("res://scripts/view/level_view.gd")
 const PlantView := preload("res://scripts/view/plant_view.gd")
 const Sfx := preload("res://scripts/sfx.gd")
+const Palettes := preload("res://scripts/view/palettes.gd")
 
 const INK := Color("e9efe6")
 const DIM := Color(0.75, 0.8, 0.78, 0.75)
@@ -68,6 +69,8 @@ var undo_button: Button
 var drag_lure_changed: bool=false
 var earned_crosses: Dictionary={}
 var drag_lure_origin:=Vector2.INF
+var cam: Camera2D
+var shake := 0.0
 
 const STOP_TEXT := {
 	"droop": "drooped — no rock to lean on",
@@ -115,7 +118,7 @@ func _ready() -> void:
 	add_child(env)
 	view = LevelView.new()
 	add_child(view)
-	var cam := Camera2D.new()
+	cam = Camera2D.new()
 	cam.position = Vector2(800, 500)
 	add_child(cam)
 	var vig := CanvasLayer.new()
@@ -206,6 +209,7 @@ func _new_overlay(dim := 0.55, hide_world := false) -> Control:
 	if pressing and mode=="play": _cancel_gesture(false)
 	_close_overlay()
 	view.visible = not hide_world
+	if mode == "play": hud.visible = false
 	var o := Control.new()
 	o.set_anchors_preset(Control.PRESET_FULL_RECT)
 	o.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -224,6 +228,7 @@ func _close_overlay() -> void:
 	if overlay != null and is_instance_valid(overlay): overlay.queue_free()
 	overlay = null
 	view.visible = true
+	if hud != null: hud.visible = mode == "play"
 
 func _toast(text: String, dur := 2.6) -> void:
 	toast.text = text
@@ -317,36 +322,82 @@ func _draw_meter() -> void:
 	var w := 300.0
 	var x := size.x - w - 40.0
 	var y := 40.0
+	var t := Time.get_ticks_msec() / 1000.0
+	_soft_panel(Rect2(x - 18, 12, w + 36, 122))
 	var frac: float = clampf(pl.energy / max(1.0, pl.energy_max), 0.0, 1.0)
-	hud_meter.draw_string(font, Vector2(x, y - 8), "SAP", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, DIM)
+	var low: bool = frac < 0.2 and pl.is_growing()
+	hud_meter.draw_string(font, Vector2(x, y - 8), "SAP", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1.0, 0.6, 0.45) if low else DIM)
 	hud_meter.draw_string(font, Vector2(x + w - 60, y - 8), str(int(max(0.0, pl.energy))), HORIZONTAL_ALIGNMENT_RIGHT, 60, 14, DIM)
 	hud_meter.draw_rect(Rect2(x, y, w, 10), Color(1, 1, 1, 0.08))
-	var col := Color(0.55, 1.0, 0.7)
-	hud_meter.draw_rect(Rect2(x, y, w * frac, 10), Color(col.r * 1.6, col.g * 1.6, col.b * 1.6))
+	var col := Color(0.55, 1.0, 0.7).lerp(Color(1.0, 0.75, 0.35), clampf((0.45 - frac) / 0.35, 0.0, 1.0))
+	var k := 1.6 + (0.6 * (0.5 + 0.5 * sin(t * 7.0)) if low else 0.0)
+	hud_meter.draw_rect(Rect2(x, y, w * frac, 10), Color(col.r * k, col.g * k, col.b * k))
+	if frac > 0.01:
+		hud_meter.draw_circle(Vector2(x + w * frac, y + 5), 6.0, Color(col, 0.25))
 	var dt: int = session.dew_total()
 	if dt > 0:
-		hud_meter.draw_string(font, Vector2(x, y + 34), "DEW  %d / %d" % [session.dew_taken(), dt], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.65, 0.9, 1.0) if session.dew_taken() == dt else DIM)
+		var all_dew: bool = session.dew_taken() == dt
+		hud_meter.draw_string(font, Vector2(x + 16, y + 34), "%d / %d" % [session.dew_taken(), dt], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.65, 0.9, 1.0) if all_dew else DIM)
+		_dew_icon(Vector2(x + 5, y + 28), Color(0.6, 1.4, 1.8) if all_dew else Color(0.6, 0.85, 1.0, 0.7))
 	var par: int = int(session.def.get("par", 99))
 	if par < 99:
 		var over: bool = session.tools_used > par
 		hud_meter.draw_string(font, Vector2(x + w - 150, y + 34), "TOOLS  %d / par %d" % [session.tools_used, par], HORIZONTAL_ALIGNMENT_RIGHT, 150, 14, Color(1.0, 0.6, 0.5) if over else DIM)
-	# tools
-	var bx := 40.0
-	var by := 150.0
-	hud_meter.draw_string(font, Vector2(bx, by - 18), "LURES  click to place · drag to move · right-click to recall", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, DIM)
-	for i in int(session.def.get("lures", 0)):
-		var c := Vector2(bx + 12 + i * 30, by + 6)
-		var have: bool = i < session.lures_left
-		hud_meter.draw_circle(c, 9, Color(0.55, 1.0, 0.95, 0.12 if have else 0.04))
-		hud_meter.draw_circle(c, 4.5, Color(0.8, 2.2, 2.1) if have else Color(1, 1, 1, 0.15))
-	var px := bx + 470.0
-	hud_meter.draw_string(font, Vector2(px, by - 18), "PRUNES  swipe across a stem", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, DIM)
-	for i in int(session.def.get("prunes", 0)):
-		var c := Vector2(px + 12 + i * 30, by + 6)
-		var have: bool = i < session.prunes_left
-		var col2 := Color(1.6, 1.5, 1.2) if have else Color(1, 1, 1, 0.15)
-		hud_meter.draw_line(c + Vector2(-8, -8), c + Vector2(8, 8), col2, 2.0, true)
-		hud_meter.draw_line(c + Vector2(-8, 8), c + Vector2(8, -8), col2, 2.0, true)
+	# tool tray, bottom left
+	var n_l := int(session.def.get("lures", 0))
+	var n_p := int(session.def.get("prunes", 0))
+	if n_l + n_p == 0: return
+	var tx := 36.0
+	var ty := size.y - 92.0
+	var lw: float = 0.0 if n_l == 0 else maxf(170.0, 40.0 + n_l * 30.0)
+	var pw: float = 0.0 if n_p == 0 else maxf(160.0, 40.0 + n_p * 30.0)
+	var gap: float = 14.0 if n_l > 0 and n_p > 0 else 0.0
+	_soft_panel(Rect2(tx, ty, lw + pw + gap + 8, 66))
+	var cx := tx + 18.0
+	if n_l > 0:
+		hud_meter.draw_string(font, Vector2(cx, ty + 20), "LURES  %d" % session.lures_left, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK if session.lures_left > 0 else DIM)
+		for i in n_l:
+			var c := Vector2(cx + 9 + i * 30, ty + 38)
+			if i < session.lures_left:
+				var pulse := 0.5 + 0.5 * sin(t * 2.4 + i)
+				hud_meter.draw_circle(c, 10.0 + pulse * 2.0, Color(0.55, 1.0, 0.95, 0.1))
+				hud_meter.draw_circle(c, 5.0, Color(0.8, 2.2, 2.1))
+			else:
+				hud_meter.draw_arc(c, 5.0, 0, TAU, 20, Color(1, 1, 1, 0.2), 1.2, true)
+		hud_meter.draw_string(font, Vector2(cx, ty + 60), "click · drag · right-click", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(DIM, 0.5))
+		cx += lw + gap
+	if n_p > 0:
+		if n_l > 0:
+			hud_meter.draw_line(Vector2(cx - gap * 0.5 - 4, ty + 12), Vector2(cx - gap * 0.5 - 4, ty + 54), Color(1, 1, 1, 0.08), 1.0)
+		hud_meter.draw_string(font, Vector2(cx, ty + 20), "CUTS  %d" % session.prunes_left, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK if session.prunes_left > 0 else DIM)
+		for i in n_p:
+			var c := Vector2(cx + 9 + i * 30, ty + 38)
+			_scissors(c, i < session.prunes_left)
+		hud_meter.draw_string(font, Vector2(cx, ty + 60), "swipe across a stem", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(DIM, 0.5))
+
+func _soft_panel(r: Rect2) -> void:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.01, 0.02, 0.03, 0.42)
+	sb.border_color = Color(0.85, 1.0, 0.92, 0.08)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(14)
+	hud_meter.draw_style_box(sb, r)
+
+func _dew_icon(c: Vector2, col: Color) -> void:
+	var pts := PackedVector2Array()
+	for i in 13:
+		var a := PI * 0.5 + (i / 12.0 - 0.5) * PI * 1.6
+		pts.append(c + Vector2(0, 2) + Vector2(cos(a), sin(a)) * 4.5)
+	pts.append(c + Vector2(0, -7))
+	hud_meter.draw_colored_polygon(pts, col)
+
+func _scissors(c: Vector2, have: bool) -> void:
+	var col := Color(1.6, 1.5, 1.2) if have else Color(1, 1, 1, 0.16)
+	# two crossed blades with finger loops
+	hud_meter.draw_line(c + Vector2(-3, 4), c + Vector2(8, -9), col, 2.0, true)
+	hud_meter.draw_line(c + Vector2(3, 4), c + Vector2(-8, -9), col, 2.0, true)
+	hud_meter.draw_arc(c + Vector2(-5, 7), 3.2, 0, TAU, 14, col, 1.6, true)
+	hud_meter.draw_arc(c + Vector2(5, 7), 3.2, 0, TAU, 14, col, 1.6, true)
 
 # ================================================================== title / demo
 
@@ -428,7 +479,7 @@ func show_map() -> void:
 	if session == null or session.def.id != "demo":
 		_start_demo()
 	sfx.music("shop")
-	var o := _new_overlay(0.45)
+	var o := _new_overlay(0.62)
 	var head := _label("THE GARDENS", 46, Color(0.92, 1.0, 0.95), title_font)
 	head.position = Vector2(80, 60)
 	o.add_child(head)
@@ -451,6 +502,8 @@ func show_map() -> void:
 		b.focus_mode = Control.FOCUS_NONE
 		b.disabled = not open
 		b.text = ""
+		b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if open else Control.CURSOR_ARROW
+		_style_tile(b, L, open, done)
 		grid.add_child(b)
 		var num := _label("%02d" % (i + 1), 13, DIM)
 		num.position = Vector2(16, 12)
@@ -470,11 +523,35 @@ func show_map() -> void:
 			sfx.play("ui", 1.1, -6)
 			show_level_intro(idx))
 	var back := _button("Back", show_title)
-	back.position = Vector2(80, 620)
+	back.position = Vector2(80, 630)
 	o.add_child(back)
 	var vault := _button("Seed Vault", func(): show_vault(false))
-	vault.position = Vector2(190, 620)
+	vault.position = Vector2(190, 630)
 	o.add_child(vault)
+
+func _style_tile(b: Button, L: Dictionary, open: bool, done: bool) -> void:
+	var pal: Dictionary = Palettes.get_palette(str(L.get("palette", "dawn")))
+	var base: Color = pal.bottom
+	var accent: Color = pal.moss
+	var fresh: bool = open and not done
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var sb := StyleBoxFlat.new()
+		sb.set_corner_radius_all(16)
+		sb.set_border_width_all(2 if fresh else 1)
+		if not open:
+			sb.bg_color = Color(0.02, 0.03, 0.04, 0.55)
+			sb.border_color = Color(1, 1, 1, 0.08)
+		else:
+			var top: Color = pal.top
+			sb.bg_color = Color(top.lerp(base, 0.35 if state == "normal" else 0.6), 0.92)
+			sb.border_color = Color(1.0, 0.85, 0.5, 0.9) if fresh else Color(accent, 0.35 if state == "normal" else 0.8)
+			sb.shadow_color = Color(accent, 0.25 if state == "hover" else 0.0)
+			sb.shadow_size = 10 if state == "hover" else 0
+		b.add_theme_stylebox_override(state, sb)
+	if fresh:
+		var tw := b.create_tween().set_loops()
+		tw.tween_property(b, "self_modulate", Color(1.25, 1.2, 1.1), 0.9).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(b, "self_modulate", Color(1, 1, 1), 0.9).set_trans(Tween.TRANS_SINE)
 
 # ================================================================== level intro + seed choice
 
@@ -729,6 +806,8 @@ func _start_level(index: int, gnm: Dictionary,plan_first: bool=false) -> void:
 	pressing = false
 	swiping = false
 	swipe_pts = []
+	shake = 0.0
+	cam.offset = Vector2.ZERO
 	var L: Dictionary = Levels.all()[index]
 	session = Session.new()
 	session.start(L, gnm, 1 + index * 17)
@@ -806,6 +885,9 @@ func _process(delta: float) -> void:
 			_start_demo()
 		return
 	if mode != "play": return
+	if shake > 0.0:
+		shake = maxf(0.0, shake - delta * 18.0)
+		cam.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake if shake > 0.05 else Vector2.ZERO
 	hud_meter.queue_redraw()
 	guidance_elapsed+=delta
 	if guidance_elapsed>=0.25:
@@ -842,6 +924,7 @@ func _drain_events() -> void:
 				view.fx.burst(e.pos, view.pal.sun, 50, 260.0, 0.0, 3.0, 1.6)
 				view.fx.ring(e.pos, view.pal.sun, 220.0, 1.2)
 				sfx.play("bloom", 1.0)
+				if not demo: shake = maxf(shake, 7.0)
 				_toast("A sunwell awakens")
 			"pollinate":
 				var w = session.world.wilds[e.i]
@@ -860,7 +943,9 @@ func _drain_events() -> void:
 				view.fx.burst(e.pos, Color(0.6, 1.0, 1.0), 60, 300.0, 300.0, 2.6, 1.4)
 				view.fx.ring(e.pos, Color(0.6, 1.0, 1.0), 140.0, 0.6)
 				sfx.play("zap", 0.8)
-				if not demo: _toast("Crystal shattered!")
+				if not demo:
+					shake = maxf(shake, 5.0)
+					_toast("Crystal shattered!")
 			"stop":
 				reasons[e.why] = int(reasons.get(e.why, 0)) + 1
 				if e.why == "burn": view.fx.burst(e.pos, Color(1.0, 0.5, 0.2), 14, 80.0, -60.0, 1.8, 1.0)
@@ -880,6 +965,7 @@ func _drain_events() -> void:
 				view.fx.ring(e.pos, Color(1.0, 0.85, 0.4), 120.0, 0.9)
 				sfx.play("zap", 1.3)
 				if not demo:
+					shake = maxf(shake, 9.0)
 					_toast("A stone gate grinds open")
 					for ri in e.opened: view.open_gate(ri)
 			"drink":
@@ -1130,7 +1216,13 @@ func _show_cross() -> void:
 	krow.size_flags_horizontal=Control.SIZE_EXPAND_FILL
 	kid_scroll.add_child(krow)
 	for i in kids.size():
-		krow.add_child(_offspring_card(kids[i], parent, wild_g, i == 0))
+		var card: Control = _offspring_card(kids[i], parent, wild_g, i == 0)
+		krow.add_child(card)
+		card.modulate.a = 0.0
+		var tw := card.create_tween()
+		tw.tween_interval(0.25 + i * 0.22)
+		tw.tween_callback(func(): sfx.play("buy", 1.0 + i * 0.12, -8))
+		tw.tween_property(card, "modulate:a", 1.0, 0.35)
 	var keep := _button("Keep the current plant · use the new seeds later", func():
 		_close_overlay()
 		paused = was_paused
@@ -1202,7 +1294,8 @@ func _offspring_card(kid: Dictionary, a: Dictionary, b: Dictionary, best: bool) 
 	lines.append(_from_line("Leaves", Genome.LEAF_NAMES[int(kid.leaf_shape)], o.get("leaf_shape", "?"), a, b))
 	lines.append(_from_line("Flowers", "%s ×%d" % [Genome.FLOWER_NAMES[int(kid.flower)], int(kid.petals)], o.get("flower", "?"), a, b))
 	lines.append(_from_line("Colour", "body", o.get("hue", "?"), a, b) + "   " + _from_line("Petals", "tint", o.get("hue2", "?"), a, b))
-	lines.append(_from_line("Pattern", Genome.PATTERN_NAMES[int(kid.pattern)], o.get("pattern", "?"), a, b) + "   " + _from_line("Stem", Genome.STEM_NAMES[int(kid.stem)], o.get("stem", "?"), a, b))
+	lines.append(_from_line("Pattern", Genome.PATTERN_NAMES[int(kid.pattern)], o.get("pattern", "?"), a, b))
+	lines.append(_from_line("Stem", Genome.STEM_NAMES[int(kid.stem)], o.get("stem", "?"), a, b))
 	for tt in tr:
 		lines.append("[color=#%s]%s[/color] from %s" % [Genome.TRAIT_INFO[tt].color.to_html(false), Genome.TRAIT_INFO[tt].name, o.get(tt, "?")])
 	rt.text = "\n".join(lines)
@@ -1234,10 +1327,12 @@ func _on_win() -> void:
 	save.add_seed(current_seed)
 	var best: Array=save.record_stars(L.id,got)
 	sfx.play("win", 1.0)
+	var petal := Genome.hue_color(float(current_seed.get("hue2", 0.1)), 0.55, 1.0)
 	for tip in session.plant.tips:
 		if tip.kind == 0 and session.plant.alive[tip.node] == 1:
 			view.plant_view.flower_open[tip.node] = 0.0
 			tip.state = "stopped"
+			view.fx.burst(session.plant.pos[tip.node], petal, 18, 110.0, 50.0, 2.4, 2.2)
 	await get_tree().create_timer(2.2).timeout
 	if mode != "play" or session!=finished_session: return
 	while overlay!=null:
@@ -1246,8 +1341,8 @@ func _on_win() -> void:
 	var o := _new_overlay(0.35)
 	var box := PanelContainer.new()
 	box.set_anchors_preset(Control.PRESET_CENTER)
-	box.position = Vector2(-360, -230)
-	box.custom_minimum_size = Vector2(720, 420)
+	box.position = Vector2(-360, -275)
+	box.custom_minimum_size = Vector2(720, 500)
 	o.add_child(box)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 14)
@@ -1259,10 +1354,34 @@ func _on_win() -> void:
 	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(msg)
 	var lines := ["Bloomed", "All dew collected  (%d / %d)" % [session.dew_taken(), session.dew_total()], "Within tool par  (%d / %d used)" % [session.tools_used, int(L.get("par", 99))]]
+	var star_row := HBoxContainer.new()
+	star_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	star_row.add_theme_constant_override("separation", 26)
+	v.add_child(star_row)
+	var big_stars: Array = []
+	for i in 3:
+		var bs := _label("✦" if got[i] or best[i] else "✧", 54, Color(1.0, 0.85, 0.45) if got[i] else (Color(1.0, 0.85, 0.45, 0.45) if best[i] else Color(1, 1, 1, 0.18)))
+		bs.custom_minimum_size = Vector2(60, 64)
+		bs.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		bs.pivot_offset = Vector2(30, 32)
+		star_row.add_child(bs)
+		big_stars.append(bs)
 	for i in 3:
 		var sl := _label(("✦  " if got[i] else "✧  ") + lines[i] + ("" if got[i] or not best[i] else "   (earned before)"), 19, Color(1.0, 0.88, 0.55) if got[i] else Color(1, 1, 1, 0.4))
 		sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(sl)
+	box.pivot_offset = Vector2(360, 230)
+	box.scale = Vector2(0.92, 0.92)
+	box.create_tween().tween_property(box, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	for i in 3:
+		var bs: Label = big_stars[i]
+		bs.scale = Vector2.ZERO
+		var tw := bs.create_tween()
+		tw.tween_interval(0.35 + i * 0.28)
+		if got[i]:
+			tw.tween_callback(func(): sfx.play("bloom", 1.0 + i * 0.18, -4))
+		tw.tween_property(bs, "scale", Vector2(1.3, 1.3) if got[i] else Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_property(bs, "scale", Vector2.ONE, 0.14)
 	if not (got[1] and got[2]):
 		var tip := _label("Try again for every star — collect the dew, use fewer tools.", 15, DIM)
 		tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
