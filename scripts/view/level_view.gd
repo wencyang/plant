@@ -6,6 +6,8 @@ const Palettes := preload("res://scripts/view/palettes.gd")
 const PlantView := preload("res://scripts/view/plant_view.gd")
 const Backdrop := preload("res://scripts/view/backdrop.gd")
 const Fx := preload("res://scripts/view/fx.gd")
+const WorldLabels := preload("res://scripts/view/world_labels.gd")
+const PruneOverlay := preload("res://scripts/view/prune_overlay.gd")
 
 var session
 var pal: Dictionary
@@ -27,6 +29,9 @@ var pollinated_glow: Dictionary = {}
 var show_guide := false
 var guide: Array = []
 var sparks: Array = []
+var world_labels: Node2D
+var label_safe_rect := Rect2(24, 180, 1552, 695)
+var prune_overlay: Node2D
 
 func build(s) -> void:
 	session = s
@@ -36,6 +41,12 @@ func build(s) -> void:
 	crystal_nodes.clear()
 	wild_views.clear()
 	rock_nodes.clear()
+	goal_bloom.clear()
+	pollinated_glow.clear()
+	for index in s.world.goals.size():
+		if bool(s.world.goals[index].reached): goal_bloom[index]=1.0
+	for index in s.world.wilds.size():
+		if bool(s.world.wilds[index].pollinated): pollinated_glow[index]=1.0
 	pal = Palettes.get_palette(str(s.def.get("palette", "dawn")))
 	sky = ColorRect.new()
 	sky.position = Vector2(-600, -400)
@@ -81,6 +92,7 @@ func build(s) -> void:
 			m.set_shader_parameter("top_y", r.aabb.position.y)
 			m.set_shader_parameter("height", min(r.aabb.size.y, 400.0))
 		poly.material = m
+		poly.visible=not bool(r.get("open",false))
 		rock_layer.add_child(poly)
 		rock_nodes.append(poly)
 	for w in s.world.waters:
@@ -97,6 +109,7 @@ func build(s) -> void:
 		var cm := ShaderMaterial.new()
 		cm.shader = preload("res://shaders/crystal.gdshader")
 		cp.material = cm
+		cp.visible=bool(c.alive)
 		rock_layer.add_child(cp)
 		crystal_nodes.append(cp)
 	deco = Node2D.new()
@@ -125,11 +138,23 @@ func build(s) -> void:
 	add_child(overlay)
 	fx = Fx.new()
 	add_child(fx)
+	world_labels = WorldLabels.new()
+	world_labels.safe_rect = label_safe_rect
+	world_labels.z_index = 20
+	add_child(world_labels)
+	world_labels.setup(s)
+	prune_overlay = PruneOverlay.new()
+	prune_overlay.safe_rect = label_safe_rect
+	prune_overlay.z_index = 30
+	add_child(prune_overlay)
+	prune_overlay.setup(s, plant_view, world_labels)
 	guide = s.def.get("guide", [])
 	sparks.clear()
 
 func replace_plant(s) -> void:
 	session = s
+	if is_instance_valid(world_labels): world_labels.session = s
+	if is_instance_valid(prune_overlay): prune_overlay.setup(s, plant_view, world_labels)
 	plant_view.setup(s.plant)
 	plant_view.flower_open.clear()
 	plant_view.big_flowers.clear()
@@ -138,6 +163,7 @@ func replace_plant(s) -> void:
 func _process(delta: float) -> void:
 	t += delta
 	if session == null: return
+	if is_instance_valid(world_labels): world_labels.hover_lure = hover_lure
 	for i in crystal_nodes.size():
 		var alive: bool = session.world.crystals[i].alive
 		var cn: Polygon2D = crystal_nodes[i]
@@ -276,7 +302,6 @@ func _draw_overlay(overlay: Node2D) -> void:
 		if session.world.sleeping(g):
 			overlay.draw_circle(p, 14.0, Color(sun, 0.18))
 			overlay.draw_arc(p, 20.0, 0, TAU, 30, Color(sun, 0.25), 1.0, true)
-			overlay.draw_string(font, p + Vector2(-60, 40), "sleeping", HORIZONTAL_ALIGNMENT_CENTER, 120, 13, Color(sun, 0.5))
 			continue
 		# corona rays
 		for i in 12:
@@ -373,10 +398,45 @@ func _draw_guide(o: Node2D, font: Font) -> void:
 			var m := a.lerp(b, fmod(t * 0.6, 1.0))
 			o.draw_circle(m, 4.0, _hdr(Color(1.0, 0.95, 0.8), 1.8))
 			o.draw_string(font, b + Vector2(14, 5), "swipe here", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, col)
-	for wi in session.world.wilds.size():
-		var w = session.world.wilds[wi]
-		if w.pollinated: continue
-		o.draw_string(font, w.pos + Vector2(-80, 24), "touch: " + str(w.genome.name), HORIZONTAL_ALIGNMENT_CENTER, 160, 14, Color(1.0, 0.9, 0.6, 0.6 + 0.3 * pulse))
+	# WorldLabels identifies the selected wild gift without repeating labels on
+	# every plant when the route hint is enabled.
+
+
+func focus_target(kind: String, index := 0, duration := 6.0) -> void:
+	if is_instance_valid(world_labels): world_labels.focus_target(kind, index, duration)
+
+func focus_position(point: Vector2, text := "", duration := 5.0) -> void:
+	if is_instance_valid(world_labels): world_labels.focus_position(point, text, duration)
+
+func clear_focus() -> void:
+	if is_instance_valid(world_labels): world_labels.clear_focus()
+
+func set_label_safe_rect(rect: Rect2) -> void:
+	label_safe_rect = rect
+	if is_instance_valid(world_labels): world_labels.safe_rect = rect
+	if is_instance_valid(prune_overlay): prune_overlay.safe_rect = rect
+
+func set_prune_preview(points: Array) -> Dictionary:
+	if is_instance_valid(prune_overlay): return prune_overlay.set_preview(points)
+	return {}
+
+func clear_prune_preview() -> void:
+	if is_instance_valid(prune_overlay): prune_overlay.clear_preview()
+
+func show_lure_feedback(point: Vector2, message: String, valid := false, duration := 2.5) -> void:
+	if is_instance_valid(world_labels): world_labels.show_lure_feedback(point, message, valid, duration)
+
+func show_action_feedback(point: Vector2, message: String, valid := false, duration := 2.5, title := "") -> void:
+	if is_instance_valid(world_labels): world_labels.show_action_feedback(point, message, valid, duration, title)
+
+func set_pointer_world(point: Vector2) -> void:
+	if is_instance_valid(world_labels): world_labels.set_pointer_world(point)
+
+func set_lure_preview(point: Vector2, valid := true, reason := "") -> void:
+	if is_instance_valid(world_labels): world_labels.set_lure_preview(point, valid, reason)
+
+func clear_lure_preview() -> void:
+	if is_instance_valid(world_labels): world_labels.clear_lure_preview()
 
 
 func open_gate(ri: int) -> void:

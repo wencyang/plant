@@ -2,6 +2,7 @@ extends RefCounted
 ## Seed vault, progress and settings.
 
 const Levels := preload("res://scripts/levels.gd")
+const Genome := preload("res://scripts/genome.gd")
 const PATH := "user://bloomward.json"
 const MAX_SEEDS := 40
 
@@ -45,8 +46,13 @@ func add_seed(g: Dictionary) -> void:
 	save()
 
 func _same_traits(a: Dictionary, b: Dictionary) -> bool:
-	for t in ["thorns", "glow", "tendrils", "roots", "buoyant", "waxy", "leaf_shape", "flower"]:
-		if int(a.get(t, 0)) != int(b.get(t, 0)): return false
+	# Two siblings with different colour, growth, petal count or ancestry are
+	# distinct discoveries even when their gifts happen to match.
+	for key: String in Genome.make({}):
+		if Genome.RANGES.has(key):
+			if absf(float(a.get(key,0))-float(b.get(key,0)))>0.00000001: return false
+			continue
+		if a.get(key)!=b.get(key): return false
 	return true
 
 func unlocked(index: int) -> bool:

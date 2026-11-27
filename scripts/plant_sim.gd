@@ -107,6 +107,10 @@ func _unsupported_at(node: int) -> float:
 func active_tips() -> int:
 	var n := 0
 	for t in tips:
+		var node: int = int(t.get("node", -1))
+		# A cut marks its descendants dead before the final tips-list cleanup.
+		# Their newly freed capacity must be available to the replacement shoots.
+		if node < 0 or node >= alive.size() or alive[node] == 0: continue
 		if t.state == "grow" or t.state == "stalled": n += 1
 	return n
 
@@ -319,17 +323,112 @@ func step(dt: float) -> void:
 						events.append({"t": "pollinate", "i": wi, "pos": np})
 						break
 
-## Cut every stem segment crossing a→b. Returns removed segments for debris.
-func prune(a: Vector2, b: Vector2) -> Array:
-	var removed: Array = []
+## Shared hit query: roots, detached growth and zero-length fresh tips are not
+## swipe targets. Preview and the actual cut use the exact same geometry.
+func _prune_hits(a: Vector2, b: Vector2) -> Array:
 	var hits: Array = []
 	for i in range(1, pos.size()):
 		if alive[i] == 0 or kind[i] != 0 or parent[i] < 0: continue
 		if pos[parent[i]].distance_to(pos[i]) < 0.5: continue
 		if Geometry2D.segment_intersects_segment(a, b, pos[parent[i]], pos[i]) != null:
 			hits.append(i)
+	return hits
+
+## Clone only plant data. The world is shared for read-only support queries;
+## prune never updates it. Separate packed arrays, dictionaries and RNG keep a
+## preview from affecting this plant, its event queue or future growth rolls.
+func _prune_preview_copy():
+	var copy = get_script().new()
+	copy.genome = genome.duplicate(true)
+	copy.world = world
+	copy.wild = wild
+	copy.rng.seed = rng.seed
+	copy.rng.state = rng.state
+	for key in ["pos", "parent", "born", "desc", "kind", "alive"]:
+		copy.set(key, get(key).duplicate())
+	for key in ["children", "tips", "blooms", "fruits", "events"]:
+		copy.set(key, get(key).duplicate(true))
+	copy.energy = energy
+	copy.energy_max = energy_max
+	copy.grown = grown
+	copy.time = time
+	return copy
+
+## Pure, exact for the currently paused tree. A curved path is evaluated in
+## order exactly like Session.prune_path: a later piece may cut an earlier
+## anchor and remove the fresh zero-length tips that it had just created.
+## removed_node_ids/removed_segments describe ORIGINAL live growth. Temporary
+## tips created and removed inside this preview are reported separately in
+## all_removed_node_ids/all_removed_segments for diagnostic comparisons.
+func preview_prune_path(points: Array) -> Dictionary:
+	var out := {"valid": true, "has_hits": false, "cuts": [], "cut_positions": PackedVector2Array(),
+		"crossed_node_ids": [], "removed_node_ids": [], "removed_segments": [], "visible_segment_count": 0,
+		"all_removed_node_ids": [], "all_removed_segments": [], "sap_refund": 0.0,
+		"new_shoots": 0, "new_shoot_positions": [], "new_shoot_directions": [], "exact_when_paused": true}
+	if points.size() < 2: return out
+	for point in points:
+		if not point is Vector2 or not point.is_finite():
+			out.valid = false
+			return out
+	var copy = _prune_preview_copy()
+	var original_count: int = pos.size()
+	var original_seen := {}
+	var all_seen := {}
+	var crossed_seen := {}
+	for path_segment in range(points.size() - 1):
+		var a: Vector2 = points[path_segment]
+		var b: Vector2 = points[path_segment + 1]
+		# The real cut records which roots were cut and which shoots it actually
+		# spawned after freeing capacity. Preview has no second capacity model.
+		var removed: Array = copy.prune(a, b)
+		if removed.is_empty(): continue
+		var actual_cut: Dictionary = copy.events.back()
+		for node_id in actual_cut.get("crossed_node_ids", []):
+			if int(node_id) < original_count and not crossed_seen.has(node_id):
+				crossed_seen[node_id] = true
+				out.crossed_node_ids.append(node_id)
+		for segment in removed:
+			var node_id: int = int(segment[2])
+			if not all_seen.has(node_id):
+				all_seen[node_id] = true
+				out.all_removed_node_ids.append(node_id)
+				out.all_removed_segments.append(segment.duplicate())
+			if node_id >= original_count or int(alive[node_id]) == 0 or original_seen.has(node_id): continue
+			original_seen[node_id] = true
+			out.removed_node_ids.append(node_id)
+			out.removed_segments.append(segment.duplicate())
+			if segment[0].distance_to(segment[1]) >= 0.5: out.visible_segment_count += 1
+		for record: Dictionary in actual_cut.get("cuts", []):
+			var cut: Dictionary = record.duplicate(true)
+			cut.path_segment = path_segment
+			# A later curve piece may still remove this new pair. Final survivors
+			# are filled below using the actual copied tree's live-node flags.
+			cut.directions = []
+			cut.new_shoots = 0
+			out.cuts.append(cut)
+			out.cut_positions.append(cut.position)
+	out.sap_refund = maxf(0.0, float(copy.energy) - energy)
+	for cut: Dictionary in out.cuts:
+		cut.survives = int(copy.alive[int(cut.parent_id)]) == 1
+		for index in range(cut.spawned_node_ids.size()):
+			var node_id: int = int(cut.spawned_node_ids[index])
+			if node_id >= copy.alive.size() or int(copy.alive[node_id]) == 0: continue
+			var direction: Vector2 = cut.planned_directions[index]
+			cut.directions.append(direction)
+			cut.new_shoots += 1
+			out.new_shoots += 1
+			out.new_shoot_positions.append(copy.pos[node_id])
+			out.new_shoot_directions.append(direction)
+	out.has_hits = not out.removed_node_ids.is_empty()
+	return out
+
+## Cut every stem segment crossing a→b. Returns removed segments for debris.
+func prune(a: Vector2, b: Vector2) -> Array:
+	var removed: Array = []
+	var hits: Array = _prune_hits(a, b)
 	if hits.is_empty(): return removed
 	var dead := {}
+	var cut_records: Array = []
 	for h in hits:
 		if dead.has(h): continue
 		var stack := [h]
@@ -354,14 +453,24 @@ func prune(a: Vector2, b: Vector2) -> Array:
 		var base_dir := (pos[h] - pos[a_node]).normalized()
 		if base_dir == Vector2.ZERO: base_dir = Vector2.UP
 		var spread: float = max(0.45, float(genome.spread))
+		var spawned: Array = []
+		var directions: Array = []
 		for side in [-1.0, 1.0]:
 			if active_tips() < MAX_TIPS:
 				_spawn_tip(a_node, base_dir.rotated(side * spread), 0, _unsupported_at(a_node))
 				tips.back().side = side
+				spawned.append(int(tips.back().node))
+				directions.append(tips.back().dir)
+		var crossing: Variant = Geometry2D.segment_intersects_segment(a, b, pos[a_node], pos[h])
+		cut_records.append({"node_id": int(h), "parent_id": int(a_node),
+			"position": crossing if crossing is Vector2 else (pos[a_node] + pos[h]) * 0.5,
+			"anchor": pos[a_node], "base_direction": base_dir, "directions": directions.duplicate(),
+			"planned_directions": directions, "spawned_node_ids": spawned, "spawned_shoots": spawned.size(),
+			"new_shoots": spawned.size(), "survives": true})
 	tips = tips.filter(func(t): return alive[t.node] == 1)
 	blooms = blooms.filter(func(n): return alive[n] == 1)
 	fruits = fruits.filter(func(n): return alive[n] == 1)
-	events.append({"t": "prune", "count": removed.size()})
+	events.append({"t": "prune", "count": removed.size(), "crossed_node_ids": hits, "cuts": cut_records})
 	return removed
 
 ## Grow a wild plant in place (no interactions), for decoration + pollination.
